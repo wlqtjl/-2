@@ -1,0 +1,91 @@
+
+======================================================================
+                      OMNI-SIM PLATFORM v2.0
+                      游戏化培训平台 - 安装包
+======================================================================
+
+
+📦 安装包文件列表
+================
+
+✅ 安装脚本
+├── install.sh                      # macOS/Linux 安装脚本
+├── install.bat                     # Windows 安装脚本
+├── start.sh                        # macOS/Linux 启动脚本
+└── start.bat                       # Windows 启动脚本
+
+✅ 项目文档
+├── README.md                       # 项目说明文档
+├── INSTALL.md                      # 安装包说明文档
+└── .gitignore                      # Git忽略文件
+
+✅ 后端服务
+├── backend/
+│   ├── requirements.txt            # Python依赖
+│   ├── main.py                     # FastAPI应用入口
+│   ├── game_training.db            # SQLite数据库（含示例数据）
+│   ├── .env.example                # 环境变量示例
+│   └── apps/
+│       ├── ai/                    # AI模块（文档解析、题目生成）
+│       ├── api/                   # API路由
+│       └── core/                  # 核心模块（数据库、认证）
+
+✅ 前端应用
+└── frontend/
+    └── apps/web/
+        ├── package.json            # Node依赖
+        ├── src/
+        │   ├── components/         # React组件
+        │   ├── pages/             # 页面组件
+        │   └── api/               # API客户端
+        └── vite.config.ts          # Vite配置
+
+
+🚀 快速开始
+===========
+
+macOS/Linux:
+  chmod +x install.sh
+  ./install.sh
+  ./start.sh
+
+Windows:
+  install.bat
+  start.bat
+
+
+📋 访问地址
+===========
+前端: http://localhost:3002
+后端: http://localhost:8000
+API文档: http://localhost:8000/docs
+
+
+👤 测试账号
+===========
+管理员: admin@example.com / （请通过种子脚本创建）
+讲师: instructor@example.com / （请自行设置）
+学员: learner@example.com / （请自行设置）
+
+
+📊 数据库
+=========
+位置: backend/game_training.db
+已包含示例课程、关卡和用户数据
+
+
+🤖 AI功能
+=========
+支持文档格式: DOCX, PDF, PPTX, TXT
+AI模型: DeepSeek, 通义千问, Claude
+配置文件: backend/.env
+
+
+📚 文档说明
+===========
+README.md       - 完整项目文档
+INSTALL.md      - 安装包使用说明
+
+
+🎉 祝您使用愉快！
+======================================================================

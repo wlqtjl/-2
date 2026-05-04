@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0" />
+<title>场景内容工作台 · OMNI-SIM</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  textarea, pre, .mono { font-family: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace; }
+  .badge-draft { background:#fde68a; color:#92400e; }
+  .badge-review { background:#bfdbfe; color:#1e40af; }
+  .badge-published { background:#bbf7d0; color:#166534; }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+<!-- 顶部 -->
+<header class="bg-white border-b sticky top-0 z-10">
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center gap-4">
+    <h1 class="text-lg font-semibold">📦 场景内容工作台</h1>
+    <span class="text-xs text-slate-500">DSL v1 · POST /api/scenarios</span>
+    <div class="flex-1"></div>
+    <span id="userBadge" class="text-sm text-slate-600"></span>
+    <button id="logoutBtn" class="text-sm text-slate-500 hover:text-red-600 hidden">退出</button>
+  </div>
+</header>
+
+<!-- 登录视图 -->
+<section id="loginView" class="hidden max-w-md mx-auto mt-20 bg-white rounded-lg shadow p-6">
+  <h2 class="text-xl font-semibold mb-4">登录</h2>
+  <p class="text-xs text-slate-500 mb-4">需要 admin / instructor 角色</p>
+  <input id="loginEmail" type="email" placeholder="邮箱" class="w-full mb-3 px-3 py-2 border rounded" />
+  <input id="loginPwd" type="password" placeholder="密码" class="w-full mb-3 px-3 py-2 border rounded" />
+  <button id="loginBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded">登录</button>
+  <p id="loginErr" class="text-sm text-red-600 mt-3 hidden"></p>
+</section>
+
+<!-- 列表视图 -->
+<section id="listView" class="hidden max-w-7xl mx-auto px-6 py-6">
+  <div class="flex items-center mb-4 gap-3">
+    <h2 class="text-xl font-semibold">场景包列表</h2>
+    <label class="text-sm text-slate-600 ml-2">
+      <input type="checkbox" id="includeDrafts" class="mr-1" />包含草稿
+    </label>
+    <div class="flex-1"></div>
+    <button id="newBtn" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded text-sm">+ 新建场景</button>
+    <button id="refreshBtn" class="bg-slate-200 hover:bg-slate-300 px-3 py-2 rounded text-sm">刷新</button>
+  </div>
+  <div class="bg-white rounded-lg shadow overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-slate-100 text-slate-600">
+        <tr>
+          <th class="text-left px-4 py-2">ID (slug)</th>
+          <th class="text-left px-4 py-2">名称</th>
+          <th class="text-left px-4 py-2">领域</th>
+          <th class="text-left px-4 py-2">难度</th>
+          <th class="text-left px-4 py-2">版本</th>
+          <th class="text-left px-4 py-2">状态</th>
+          <th class="text-left px-4 py-2">操作</th>
+        </tr>
+      </thead>
+      <tbody id="listBody"></tbody>
+    </table>
+    <div id="listEmpty" class="text-center text-slate-400 py-10 hidden">暂无场景，点右上方“新建场景”开始。</div>
+  </div>
+</section>
+
+<!-- 编辑视图 -->
+<section id="editView" class="hidden max-w-7xl mx-auto px-6 py-6">
+  <div class="flex items-center mb-4 gap-3">
+    <button id="backBtn" class="text-slate-500 hover:text-slate-800">← 返回列表</button>
+    <h2 id="editTitle" class="text-xl font-semibold"></h2>
+    <span id="editStatus" class="text-xs px-2 py-0.5 rounded-full"></span>
+    <div class="flex-1"></div>
+    <button id="loadTplBtn" class="bg-slate-200 hover:bg-slate-300 px-3 py-2 rounded text-sm">📋 复制现有场景为模板</button>
+    <button id="formatBtn" class="bg-slate-200 hover:bg-slate-300 px-3 py-2 rounded text-sm">格式化</button>
+    <button id="saveDraftBtn" class="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded text-sm">保存草稿</button>
+    <button id="publishBtn" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded text-sm">发布</button>
+  </div>
+
+  <div class="grid grid-cols-12 gap-4">
+    <!-- 元数据表单 -->
+    <aside class="col-span-4 bg-white rounded-lg shadow p-5 space-y-3 self-start sticky top-20">
+      <h3 class="font-semibold text-slate-700 mb-2">元数据</h3>
+      <div>
+        <label class="text-xs text-slate-500">场景 ID（slug，唯一）</label>
+        <input id="metaId" class="w-full px-3 py-2 border rounded mono text-sm" placeholder="e.g. smartx-hci-deploy-iops-v1" />
+      </div>
+      <div>
+        <label class="text-xs text-slate-500">名称</label>
+        <input id="metaName" class="w-full px-3 py-2 border rounded text-sm" />
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <label class="text-xs text-slate-500">领域</label>
+          <input id="metaDomain" class="w-full px-3 py-2 border rounded text-sm" placeholder="hci / network..." />
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">难度</label>
+          <select id="metaDifficulty" class="w-full px-3 py-2 border rounded text-sm">
+            <option value="beginner">beginner</option>
+            <option value="intermediate">intermediate</option>
+            <option value="advanced">advanced</option>
+            <option value="expert">expert</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <label class="text-xs text-slate-500">版本</label>
+        <input id="metaVersion" class="w-full px-3 py-2 border rounded text-sm" value="1.0.0" />
+      </div>
+      <div class="pt-3 border-t text-xs text-slate-500 space-y-1">
+        <div>📐 <strong>JSON 字段说明：</strong></div>
+        <div class="mono">meta: {id, name, domain, difficulty, version}</div>
+        <div class="mono">narrative: {briefing, success, failure, npcName}</div>
+        <div class="mono">stages: [{id, type, title, ...}]</div>
+        <div class="mono">scoring: {passingScore, maxScore}</div>
+        <div class="mono text-amber-600">intro_video: "/path/to.mp4" (可选)</div>
+        <div class="text-amber-600 pt-1">⚡ intro_video 为空时自动按 <code>meta.domain</code> + 阶段列表生成 Canvas 动画开场（主题色：storage 蓝、network 绿、security 红、ai 紫…）。完全替代 bundle 默认 V2V 视频。</div>
+        <div class="pt-1">📖 完整 schema 见 <code>seed_scenarios.py</code></div>
+      </div>
+      <p id="editMsg" class="text-sm hidden"></p>
+    </aside>
+
+    <!-- JSON 编辑器 -->
+    <main class="col-span-8 bg-white rounded-lg shadow p-5">
+      <div class="flex items-center mb-2">
+        <h3 class="font-semibold text-slate-700">payload (JSON)</h3>
+        <span id="jsonStatus" class="ml-3 text-xs"></span>
+      </div>
+      <textarea id="jsonEditor" class="w-full h-[600px] p-3 border rounded text-sm leading-relaxed" spellcheck="false"></textarea>
+    </main>
+  </div>
+</section>
+
+<script>
+const API = ''; // same-origin
+let token = localStorage.getItem('token') || '';
+let me = null;
+let scenarios = [];
+let editing = null; // null = list, 'new' = creating, slug = editing existing
+
+// ── helpers ──────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const show = (id) => $(id).classList.remove('hidden');
+const hide = (id) => $(id).classList.add('hidden');
+function authHeaders() { return token ? { 'Authorization': 'Bearer ' + token } : {}; }
+function setMsg(text, ok) {
+  const el = $('editMsg'); el.textContent = text;
+  el.className = 'text-sm ' + (ok ? 'text-emerald-600' : 'text-red-600');
+  el.classList.remove('hidden');
+  setTimeout(() => el.classList.add('hidden'), 4000);
+}
+function badge(status) {
+  const cls = 'badge-' + status;
+  return `<span class="text-xs px-2 py-0.5 rounded-full ${cls}">${status}</span>`;
+}
+
+// ── auth ─────────────────────────────────────────────────────────────
+async function fetchMe() {
+  const r = await fetch(API + '/auth/me', { headers: authHeaders() });
+  if (!r.ok) throw new Error('unauthorized');
+  return r.json();
+}
+async function login(email, pwd) {
+  const body = new URLSearchParams({ username: email, password: pwd });
+  const r = await fetch(API + '/auth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body
+  });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || '登录失败');
+  const data = await r.json();
+  token = data.access_token;
+  localStorage.setItem('token', token);
+}
+$('loginBtn').onclick = async () => {
+  $('loginErr').classList.add('hidden');
+  try {
+    await login($('loginEmail').value.trim(), $('loginPwd').value);
+    await boot();
+  } catch (e) {
+    $('loginErr').textContent = String(e.message || e);
+    $('loginErr').classList.remove('hidden');
+  }
+};
+$('logoutBtn').onclick = () => {
+  localStorage.removeItem('token'); token = ''; me = null;
+  hide('listView'); hide('editView'); hide('logoutBtn');
+  $('userBadge').textContent = '';
+  show('loginView');
+};
+
+// ── list ─────────────────────────────────────────────────────────────
+async function loadList() {
+  const includeDrafts = $('includeDrafts').checked;
+  const r = await fetch(API + '/api/scenarios?include_drafts=' + includeDrafts, { headers: authHeaders() });
+  if (!r.ok) { setMsg('加载列表失败 ' + r.status, false); return; }
+  scenarios = await r.json();
+  renderList();
+}
+function renderList() {
+  const tbody = $('listBody');
+  if (!scenarios.length) {
+    tbody.innerHTML = ''; show('listEmpty'); return;
+  }
+  hide('listEmpty');
+  tbody.innerHTML = scenarios.map(s => `
+    <tr class="border-t hover:bg-slate-50">
+      <td class="px-4 py-2 mono text-xs">${s.scenario_id}</td>
+      <td class="px-4 py-2">${s.name || ''}</td>
+      <td class="px-4 py-2 text-slate-500">${s.domain || '-'}</td>
+      <td class="px-4 py-2 text-slate-500">${s.difficulty || '-'}</td>
+      <td class="px-4 py-2 text-slate-500">${s.version || '-'}</td>
+      <td class="px-4 py-2">${badge(s.status)}</td>
+      <td class="px-4 py-2 space-x-2">
+        <button data-edit="${s.scenario_id}" class="text-blue-600 hover:underline text-sm">编辑</button>
+        <a href="/game/index.html?scenario=${s.scenario_id}" target="_blank" class="text-slate-500 hover:underline text-sm">预览游戏</a>
+      </td>
+    </tr>
+  `).join('');
+  tbody.querySelectorAll('[data-edit]').forEach(b =>
+    b.onclick = () => openEdit(b.dataset.edit));
+}
+$('refreshBtn').onclick = loadList;
+$('includeDrafts').onchange = loadList;
+
+// ── edit ─────────────────────────────────────────────────────────────
+const BLANK_PAYLOAD = {
+  meta: {
+    id: "",
+    name: "",
+    domain: "",
+    difficulty: "intermediate",
+    version: "1.0.0"
+  },
+  // 可选：场景开场视频 URL（不填则自动生成主题简报卡，避免泄露默认 V2V 视频）
+  intro_video: null,
+  narrative: {
+    briefing: "（这里写给玩家的开场介绍）",
+    success: "任务完成！",
+    failure: "任务失败，请复盘。",
+    npcName: "指导官"
+  },
+  stages: [
+    {
+      id: "stage1",
+      type: "question",
+      title: "示例题",
+      weight: 30,
+      questions: [
+        {
+          id: "q1",
+          type: "single",
+          stem: "在这里写题目",
+          options: [
+            { key: "A", label: "选项 A" },
+            { key: "B", label: "选项 B" }
+          ],
+          correctAnswer: "A",
+          points: 30
+        }
+      ]
+    }
+  ],
+  scoring: { passingScore: 60, maxScore: 100 }
+};
+
+async function openEdit(slug) {
+  hide('listView'); show('editView');
+  $('jsonStatus').textContent = '';
+  if (slug === '__new__') {
+    editing = '__new__';
+    $('editTitle').textContent = '新建场景';
+    $('editStatus').outerHTML = '<span id="editStatus" class="text-xs px-2 py-0.5 rounded-full badge-draft">draft</span>';
+    $('metaId').value = '';
+    $('metaId').disabled = false;
+    $('metaName').value = '';
+    $('metaDomain').value = '';
+    $('metaDifficulty').value = 'intermediate';
+    $('metaVersion').value = '1.0.0';
+    $('jsonEditor').value = JSON.stringify(BLANK_PAYLOAD, null, 2);
+    return;
+  }
+  // load existing
+  const r = await fetch(API + '/api/scenarios/' + encodeURIComponent(slug), { headers: authHeaders() });
+  if (!r.ok) { setMsg('加载失败', false); return; }
+  const s = await r.json();
+  editing = slug;
+  $('editTitle').textContent = '编辑：' + s.name;
+  document.getElementById('editStatus').outerHTML = '<span id="editStatus" class="text-xs px-2 py-0.5 rounded-full badge-' + s.status + '">' + s.status + '</span>';
+  $('metaId').value = s.scenario_id;
+  $('metaId').disabled = true;
+  $('metaName').value = s.name || '';
+  $('metaDomain').value = s.domain || '';
+  $('metaDifficulty').value = s.difficulty || 'intermediate';
+  $('metaVersion').value = s.version || '1.0.0';
+  $('jsonEditor').value = JSON.stringify(s.payload, null, 2);
+}
+
+$('backBtn').onclick = () => { hide('editView'); show('listView'); editing = null; loadList(); };
+$('newBtn').onclick = () => openEdit('__new__');
+
+$('formatBtn').onclick = () => {
+  try {
+    const parsed = JSON.parse($('jsonEditor').value);
+    $('jsonEditor').value = JSON.stringify(parsed, null, 2);
+    $('jsonStatus').textContent = '✓ 格式正确';
+    $('jsonStatus').className = 'ml-3 text-xs text-emerald-600';
+  } catch (e) {
+    $('jsonStatus').textContent = '✗ ' + e.message;
+    $('jsonStatus').className = 'ml-3 text-xs text-red-600';
+  }
+};
+
+$('loadTplBtn').onclick = async () => {
+  if (!scenarios.length) { setMsg('没有可用模板，请先在列表加载', false); return; }
+  const choices = scenarios.map(s => s.scenario_id).join('\n');
+  const pick = prompt('输入要复制的场景 ID：\n\n' + choices);
+  if (!pick) return;
+  const r = await fetch(API + '/api/scenarios/' + encodeURIComponent(pick), { headers: authHeaders() });
+  if (!r.ok) { setMsg('加载模板失败', false); return; }
+  const s = await r.json();
+  $('jsonEditor').value = JSON.stringify(s.payload, null, 2);
+  $('metaDomain').value = s.domain || '';
+  $('metaDifficulty').value = s.difficulty || 'intermediate';
+  setMsg('已载入模板 payload，请修改后另存', true);
+};
+
+async function save(targetStatus) {
+  // validate JSON
+  let payload;
+  try { payload = JSON.parse($('jsonEditor').value); }
+  catch (e) { setMsg('JSON 解析错误：' + e.message, false); return; }
+
+  const slug = $('metaId').value.trim();
+  const name = $('metaName').value.trim();
+  if (!slug || !name) { setMsg('场景 ID 和名称必填', false); return; }
+  if (!/^[a-z0-9][a-z0-9-]*$/i.test(slug)) { setMsg('场景 ID 只能包含字母、数字、-', false); return; }
+
+  const body = {
+    name,
+    domain: $('metaDomain').value.trim() || null,
+    difficulty: $('metaDifficulty').value,
+    version: $('metaVersion').value.trim() || '1.0.0',
+    status: targetStatus,
+    payload,
+  };
+
+  const isNew = (editing === '__new__');
+  const url = isNew ? (API + '/api/scenarios') : (API + '/api/scenarios/' + encodeURIComponent(slug));
+  if (isNew) body.scenario_id = slug;
+
+  const r = await fetch(url, {
+    method: isNew ? 'POST' : 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const txt = await r.text();
+    setMsg('保存失败 ' + r.status + ': ' + txt, false);
+    return;
+  }
+  setMsg('保存成功 (' + targetStatus + ')', true);
+  editing = slug;
+  $('metaId').disabled = true;
+  document.getElementById('editStatus').outerHTML = '<span id="editStatus" class="text-xs px-2 py-0.5 rounded-full badge-' + targetStatus + '">' + targetStatus + '</span>';
+}
+$('saveDraftBtn').onclick = () => save('draft');
+$('publishBtn').onclick = () => {
+  if (!confirm('确认发布？已发布场景对所有学员可见。')) return;
+  save('published');
+};
+
+// ── boot ─────────────────────────────────────────────────────────────
+async function boot() {
+  if (!token) { hide('listView'); hide('editView'); show('loginView'); return; }
+  try {
+    me = await fetchMe();
+  } catch {
+    localStorage.removeItem('token'); token = '';
+    show('loginView'); return;
+  }
+  if (!['admin', 'instructor'].includes(me.role)) {
+    alert('需要 admin 或 instructor 权限，当前角色：' + me.role);
+    return;
+  }
+  hide('loginView');
+  $('userBadge').textContent = me.email + ' · ' + me.role;
+  show('logoutBtn');
+  show('listView');
+  await loadList();
+}
+boot();
+</script>
+
+</body>
+</html>

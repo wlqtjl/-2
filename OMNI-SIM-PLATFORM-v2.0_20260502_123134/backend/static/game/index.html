@@ -1,0 +1,1051 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>数据中心攻坚战 · SmartX FPS</title>
+    <meta
+      name="description"
+      content="以 SmartX V2V 迁移为主题的 FPS × 模拟经营体验：在 3D 机房中操作控制台，驱动真实迁移状态机并依据执行质量计分。"
+    />
+    <meta name="theme-color" content="#0A0E1A" />
+    <meta name="color-scheme" content="dark" />
+    <link rel="icon" type="image/svg+xml" href="/game/favicon.svg" />
+    <link rel="manifest" href="/game/site.webmanifest" />
+
+    <!-- Open Graph / Social -->
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:title" content="数据中心攻坚战 · SmartX FPS" />
+    <meta
+      property="og:description"
+      content="在 3D 机房中完成 SmartX V2V 迁移全流程：扫描 → 兼容性 → 网络/存储映射 → 数据同步 → 驱动注入 → 切换 → 验证。"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="数据中心攻坚战 · SmartX FPS" />
+    <meta
+      name="twitter:description"
+      content="FPS × SmartX 迁移仿真。"
+    />
+
+    <style>
+      html, body { margin: 0; padding: 0; background: #0A0E1A; color: #E8EFF7;
+        font-family: "Inter","Noto Sans SC",sans-serif; overflow: hidden; }
+      #app { width: 100vw; height: 100vh; }
+      #ui-root { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+      #ui-root > * { pointer-events: auto; }
+      #fallback {
+        position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+        padding: 24px; text-align: center; z-index: 100;
+        background: radial-gradient(ellipse at center, #0F1F34 0%, #0A0E1A 70%);
+      }
+      #fallback.visible { display: flex; }
+      #fallback .card {
+        max-width: 520px; border: 1px solid #1F3552; border-radius: 12px;
+        padding: 28px 32px; background: rgba(10, 14, 26, 0.85);
+        box-shadow: 0 0 40px rgba(63, 167, 255, 0.15);
+      }
+      #fallback h1 { margin: 0 0 8px; font-size: 22px; color: #9CDCFE; }
+      #fallback p { margin: 8px 0; line-height: 1.6; color: #AFC1D6; }
+      #fallback code { background: #142238; padding: 2px 6px; border-radius: 4px; color: #E8EFF7; }
+    </style>
+    <script>
+      // OMNI-SIM platform integration: same-origin backend + JWT bridge.
+      (function () {
+        try {
+          // Same-origin: empty base means /api/* lands on the host serving this page.
+          window.__GAME_API_URL__ = window.__GAME_API_URL__ || '';
+
+          var qs = new URLSearchParams(window.location.search);
+          var jwt = qs.get('token') ||
+                    (window.localStorage && (
+                      window.localStorage.getItem('token') ||
+                      window.localStorage.getItem('access_token'))) ||
+                    null;
+
+          // 平台关卡上下文：URL ?levelId=N 时拉取该关卡的 FPS mission 模板，
+          // 暴露给游戏 bundle 在 boot 时按关卡参数初始化战役。
+          var levelId = qs.get('levelId') || qs.get('level_id') || null;
+          if (levelId) {
+            try {
+              var mxhr = new XMLHttpRequest();
+              mxhr.open('GET', '/api/migration/levels/' + encodeURIComponent(levelId) + '/mission', false);
+              mxhr.send(null);
+              if (mxhr.status >= 200 && mxhr.status < 300) {
+                window.__GAME_LEVEL__ = JSON.parse(mxhr.responseText);
+              }
+            } catch (e) {
+              console.warn('[OMNI-SIM] level mission fetch failed:', e);
+            }
+          }
+
+          // Scene DSL v1：URL ?scenario=<slug> 时从后端拉取完整场景包，
+          // 暴露为 window.__GAME_SCENARIO__ 供引擎数据驱动渲染。
+          // 若同时带 levelId，则 __GAME_LEVEL__ 的 briefing/passScore/maxScore
+          // 会被场景包中 narrative/scoring 对应字段覆盖（场景包优先）。
+          var scenarioId = qs.get('scenario') || null;
+          if (scenarioId) {
+            try {
+              var sxhr = new XMLHttpRequest();
+              // 先尝试需要 JWT 的接口（已登录用户），失败则走公开接口
+              var scenarioUrl = jwt
+                ? '/api/scenarios/' + encodeURIComponent(scenarioId)
+                : '/api/scenarios/public/' + encodeURIComponent(scenarioId);
+              sxhr.open('GET', scenarioUrl, false);
+              if (jwt) sxhr.setRequestHeader('Authorization', 'Bearer ' + jwt);
+              sxhr.send(null);
+              if (sxhr.status >= 200 && sxhr.status < 300) {
+                var scenarioData = JSON.parse(sxhr.responseText);
+                window.__GAME_SCENARIO__ = scenarioData;
+                // 同步覆盖 __GAME_LEVEL__ 里的相关字段，保证引擎兼容
+                if (window.__GAME_LEVEL__ && scenarioData && scenarioData.payload) {
+                  var p = scenarioData.payload;
+                  if (p.narrative && p.narrative.briefing) {
+                    window.__GAME_LEVEL__.briefing = p.narrative.briefing;
+                  }
+                  if (p.scoring) {
+                    if (p.scoring.passingScore != null) {
+                      window.__GAME_LEVEL__.passScore = p.scoring.passingScore;
+                    }
+                    if (p.scoring.maxScore != null) {
+                      window.__GAME_LEVEL__.maxScore = p.scoring.maxScore;
+                    }
+                  }
+                  if (p.meta && p.meta.name) {
+                    window.__GAME_LEVEL__.levelName = p.meta.name;
+                  }
+                }
+              }
+            } catch (e) {
+              console.warn('[OMNI-SIM] scenario fetch failed:', e);
+            }
+          }
+
+          if (jwt) {
+            // Pre-establish a game session bound to the platform user. We make a
+            // synchronous-ish blocking request so __GAME_TOKEN__ is set before the
+            // bundle reads it.
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', (window.__GAME_API_URL__ || '') + '/api/auth/session', false);
+            xhr.setRequestHeader('content-type', 'application/json');
+            xhr.setRequestHeader('Authorization', 'Bearer ' + jwt);
+            try {
+              xhr.send(JSON.stringify({ playerName: qs.get('name') || '' }));
+              if (xhr.status >= 200 && xhr.status < 300) {
+                var data = JSON.parse(xhr.responseText);
+                if (data && data.token) {
+                  window.__GAME_TOKEN__ = data.token;
+                  window.__GAME_PLAYER__ = data.playerName || data.player_name || '';
+                }
+              }
+            } catch (e) {
+              // Non-fatal: fall back to in-game guest login.
+              console.warn('[OMNI-SIM] JWT bridge failed:', e);
+            }
+          }
+
+          // 通关回调：游戏胜利时调用 window.__OMNI_REPORT_VICTORY__(score, meta)
+          // → 写入 LevelAttempt（视为关卡通过）+ postMessage 通知父 iframe。
+          window.__OMNI_REPORT_VICTORY__ = function (score, meta) {            try {
+              var lvl = window.__GAME_LEVEL__ && window.__GAME_LEVEL__.levelId;
+              if (lvl && window.__GAME_TOKEN__) {
+                var rxhr = new XMLHttpRequest();
+                rxhr.open('POST', '/api/migration/levels/' + lvl + '/complete', true);
+                rxhr.setRequestHeader('content-type', 'application/json');
+                rxhr.setRequestHeader('x-session-token', window.__GAME_TOKEN__);
+                rxhr.onload = function () {
+                  try { window.parent && window.parent.postMessage({
+                    type: 'omni-level-complete',
+                    levelId: lvl,
+                    score: score,
+                    response: JSON.parse(rxhr.responseText || '{}')
+                  }, '*'); } catch (e) {}
+                };
+                rxhr.send(JSON.stringify({
+                  score: Math.max(0, score | 0),
+                  metadata: meta || null
+                }));
+              } else {
+                // anonymous / no level context → just notify parent.
+                try { window.parent && window.parent.postMessage({
+                  type: 'omni-level-complete',
+                  levelId: null, score: score
+                }, '*'); } catch (e) {}
+              }
+            } catch (e) {
+              console.warn('[OMNI-SIM] report victory failed:', e);
+            }
+          };
+
+          // 自动钩子：拦截游戏 bundle 的 POST /api/leaderboard,
+          // 同步把分数上报给平台关卡完成接口（仅当带 levelId 时）。
+          (function hookFetch() {
+            if (typeof window.fetch !== 'function') return;
+            var origFetch = window.fetch.bind(window);
+            window.fetch = function (input, init) {
+              try {
+                var url = (typeof input === 'string') ? input : (input && input.url) || '';
+                var method = (init && init.method) || (input && input.method) || 'GET';
+                if (String(method).toUpperCase() === 'POST'
+                    && /\/api\/leaderboard(?!\/)/i.test(url)) {
+                  var payload = null;
+                  try {
+                    var body = init && init.body;
+                    if (typeof body === 'string') payload = JSON.parse(body);
+                    else if (body && typeof body === 'object' && !(body instanceof FormData)) payload = body;
+                  } catch (_e) { payload = null; }
+                  var s = (payload && typeof payload.score !== 'undefined') ? (payload.score | 0) : 0;
+                  if (window.__OMNI_REPORT_VICTORY__) {
+                    try { window.__OMNI_REPORT_VICTORY__(s, payload); } catch (_e) {}
+                  }
+                }
+              } catch (_e) { /* ignore */ }
+              return origFetch(input, init);
+            };
+          })();
+        } catch (e) {
+          console.warn('[OMNI-SIM] integration bootstrap error:', e);
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/game/assets/index-DH5wPXvt.js"></script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="ui-root"></div>
+
+    <!-- 浏览器不支持 WebGL / JS 禁用时的降级文案 -->
+    <div id="fallback" role="alert" aria-live="polite">
+      <div class="card">
+        <h1>无法启动 3D 场景</h1>
+        <p>
+          本作依赖 <strong>WebGL</strong>。请使用较新版本的桌面浏览器
+          （Chrome / Edge / Firefox / Safari ≥ 最近两个大版本）访问。
+        </p>
+        <p>
+          若已开启硬件加速仍无法加载，请尝试：
+          更新显卡驱动、关闭隐私浏览、或在浏览器地址栏输入
+          <code>chrome://gpu</code> / <code>about:support</code> 查看 WebGL 状态。
+        </p>
+        <p>推荐运行环境：桌面浏览器 + 分辨率 ≥ 1280×720，键鼠可用。</p>
+      </div>
+    </div>
+
+    <noscript>
+      <div style="padding:24px;color:#E8EFF7;">
+        本作需要启用 JavaScript 才能运行。请在浏览器设置中启用后重试。
+      </div>
+    </noscript>
+
+    <script>
+      // 检测 WebGL；失败时显示降级层。
+      (function () {
+        try {
+          const canvas = document.createElement('canvas');
+          const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+          if (!gl) throw new Error('no webgl');
+        } catch (e) {
+          const el = document.getElementById('fallback');
+          if (el) el.classList.add('visible');
+        }
+      })();
+    </script>
+
+    <!-- ==================================================================
+         场景驱动任务终端 (Scenario Mission Terminal)
+         数据来源：window.__GAME_SCENARIO__.payload.stages
+         交互：Tab 切换面板；面板打开时按 E 执行当前阶段。
+         不修改游戏 bundle，纯数据驱动；不同场景自动呈现不同培训流程。
+         ================================================================== -->
+    <style>
+      #scenario-hud {
+        position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+        z-index: 50; pointer-events: none;
+        background: rgba(10, 14, 26, 0.78); backdrop-filter: blur(8px);
+        border: 1px solid #1F3552; border-radius: 8px;
+        padding: 6px 14px; font-size: 12px; color: #9CDCFE;
+        font-family: "JetBrains Mono", ui-monospace, Menlo, monospace;
+        display: none;
+      }
+      #scenario-hud.visible { display: block; }
+      #scenario-hud .step { color: #FFD479; font-weight: 600; }
+      #scenario-hud .hint { color: #6E89A8; margin-left: 8px; }
+
+      #scenario-panel {
+        position: fixed; inset: 0; z-index: 60;
+        background: rgba(5, 8, 16, 0.85); backdrop-filter: blur(4px);
+        display: none; align-items: center; justify-content: center;
+        padding: 24px; pointer-events: auto;
+      }
+      #scenario-panel.visible { display: flex; }
+      #scenario-panel .term {
+        width: min(820px, 92vw); max-height: 86vh; overflow: auto;
+        background: linear-gradient(180deg, #0E1828 0%, #0A0E1A 100%);
+        border: 1px solid #2B4569; border-radius: 12px;
+        box-shadow: 0 0 60px rgba(63, 167, 255, 0.15);
+        padding: 24px 28px; color: #E8EFF7;
+        font-family: "Inter", "Noto Sans SC", sans-serif;
+      }
+      #scenario-panel header {
+        display: flex; align-items: baseline; gap: 12px;
+        border-bottom: 1px solid #1F3552; padding-bottom: 10px; margin-bottom: 16px;
+      }
+      #scenario-panel header h2 { margin: 0; font-size: 18px; color: #9CDCFE; }
+      #scenario-panel header .progress { color: #FFD479; font-size: 13px; font-family: "JetBrains Mono", monospace; }
+      #scenario-panel header .score { margin-left: auto; color: #7EE787; font-size: 13px; font-family: "JetBrains Mono", monospace; }
+
+      #scenario-panel .stage-title { font-size: 22px; color: #FFD479; margin: 6px 0 4px; }
+      #scenario-panel .stage-type { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px;
+        background: #142238; color: #9CDCFE; font-family: "JetBrains Mono", monospace; margin-bottom: 12px; }
+      #scenario-panel .stage-desc { color: #AFC1D6; line-height: 1.7; margin-bottom: 14px; }
+      #scenario-panel .stage-body { background: rgba(20,34,56,0.5); border: 1px solid #1F3552;
+        border-radius: 8px; padding: 14px 18px; margin-bottom: 16px; }
+
+      #scenario-panel .qstem { color: #E8EFF7; font-size: 15px; margin: 0 0 10px; }
+      #scenario-panel .qopt { display: block; padding: 8px 12px; margin: 6px 0; border: 1px solid #2B4569;
+        border-radius: 6px; cursor: pointer; transition: all 0.15s; color: #AFC1D6; font-size: 13px; }
+      #scenario-panel .qopt:hover { background: rgba(63, 167, 255, 0.08); border-color: #3FA7FF; color: #E8EFF7; }
+      #scenario-panel .qopt.selected { background: rgba(255, 212, 121, 0.12); border-color: #FFD479; color: #FFD479; }
+      #scenario-panel .qopt.correct { background: rgba(126, 231, 135, 0.15); border-color: #7EE787; color: #7EE787; }
+      #scenario-panel .qopt.wrong { background: rgba(255, 99, 99, 0.15); border-color: #FF6363; color: #FF6363; }
+      #scenario-panel .qhint { color: #6E89A8; font-size: 12px; margin-top: 8px; font-style: italic; }
+      #scenario-panel .qexp { color: #7EE787; font-size: 13px; margin-top: 12px; padding: 8px 12px;
+        background: rgba(126, 231, 135, 0.08); border-left: 3px solid #7EE787; border-radius: 4px; }
+
+      #scenario-panel footer { display: flex; gap: 10px; align-items: center; padding-top: 12px; border-top: 1px solid #1F3552; }
+      #scenario-panel .key { display: inline-block; padding: 3px 9px; border: 1px solid #3FA7FF;
+        border-radius: 4px; color: #3FA7FF; font-family: "JetBrains Mono", monospace; font-size: 12px; font-weight: 600; }
+      #scenario-panel .label { color: #AFC1D6; font-size: 13px; }
+      #scenario-panel button {
+        background: linear-gradient(180deg, #3FA7FF 0%, #2374D9 100%);
+        color: #0A0E1A; border: none; border-radius: 6px; padding: 8px 18px;
+        font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
+      }
+      #scenario-panel button:hover { filter: brightness(1.1); }
+      #scenario-panel button.ghost { background: transparent; border: 1px solid #2B4569; color: #AFC1D6; }
+      #scenario-panel button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+      #scenario-toast {
+        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        z-index: 70; background: rgba(10, 14, 26, 0.95); border: 2px solid #7EE787;
+        border-radius: 12px; padding: 24px 36px; color: #7EE787; font-size: 18px;
+        font-family: "Inter", sans-serif; display: none; box-shadow: 0 0 60px rgba(126, 231, 135, 0.3);
+      }
+      #scenario-toast.visible { display: block; }
+      #scenario-toast.fail { border-color: #FF6363; color: #FF6363; box-shadow: 0 0 60px rgba(255, 99, 99, 0.3); }
+
+      /* 场景配套开场视频遮罩（z-index 高于 bundle 自带 intro，整体遮住） */
+      #scenario-intro {
+        position: fixed; inset: 0; z-index: 90; background: #000;
+        display: none; align-items: center; justify-content: center;
+      }
+      #scenario-intro.visible { display: flex; }
+      #scenario-intro video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+      #scenario-intro-canvas { width: 100%; height: 100%; display: block; }
+      #scenario-intro .skip {
+        position: absolute; top: 18px; right: 24px; z-index: 91;
+        background: rgba(10,14,26,0.78); color: #9CDCFE;
+        border: 1px solid #2B4569; border-radius: 6px;
+        padding: 6px 14px; font-family: "JetBrains Mono", monospace; font-size: 13px;
+        cursor: pointer;
+      }
+      #scenario-intro .skip:hover { background: rgba(63,167,255,0.15); color: #FFD479; }
+      #scenario-intro .caption {
+        position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
+        color: #E8EFF7; font-family: "Inter", sans-serif; font-size: 14px;
+        background: rgba(10,14,26,0.6); padding: 6px 14px; border-radius: 4px;
+      }
+      #scenario-intro .briefing-card {
+        max-width: 720px; padding: 40px 48px;
+        background: linear-gradient(180deg, #0E1828 0%, #0A0E1A 100%);
+        border: 1px solid #2B4569; border-radius: 12px;
+        box-shadow: 0 0 80px rgba(63, 167, 255, 0.2);
+        color: #E8EFF7; font-family: "Inter","Noto Sans SC",sans-serif;
+        text-align: left;
+      }
+      #scenario-intro .briefing-card .label {
+        color: #FFD479; font-family: "JetBrains Mono", monospace; font-size: 12px;
+        letter-spacing: 0.2em; margin-bottom: 8px;
+      }
+      #scenario-intro .briefing-card h1 {
+        margin: 0 0 16px; font-size: 28px; color: #9CDCFE; font-weight: 600;
+      }
+      #scenario-intro .briefing-card .domain-tag {
+        display: inline-block; padding: 3px 10px; margin-right: 8px;
+        background: #142238; color: #9CDCFE; border-radius: 10px;
+        font-family: "JetBrains Mono", monospace; font-size: 11px;
+      }
+      #scenario-intro .briefing-card p {
+        line-height: 1.8; color: #AFC1D6; font-size: 15px; margin: 14px 0;
+      }
+      #scenario-intro .briefing-card .stage-list {
+        margin-top: 18px; padding-top: 16px; border-top: 1px solid #1F3552;
+        font-size: 13px; color: #6E89A8;
+      }
+      #scenario-intro .briefing-card .stage-list ol { padding-left: 20px; margin: 8px 0 0; }
+      #scenario-intro .briefing-card .stage-list li { margin: 4px 0; color: #AFC1D6; }
+      #scenario-intro .briefing-card .start-hint {
+        margin-top: 20px; padding-top: 14px; border-top: 1px solid #1F3552;
+        text-align: center; color: #FFD479; font-size: 14px;
+      }
+      #scenario-intro .briefing-card .key {
+        display: inline-block; padding: 3px 9px; border: 1px solid #FFD479;
+        border-radius: 4px; color: #FFD479; font-family: "JetBrains Mono", monospace;
+        font-size: 12px; font-weight: 600; margin: 0 4px;
+      }
+
+      /* 场景主题侧边 HUD（覆盖游戏右侧 V2V 视觉） */
+      #scenario-side {
+        position: fixed; top: 80px; right: 18px; z-index: 60;
+        width: 260px; max-height: 70vh; overflow: hidden;
+        background: linear-gradient(180deg, rgba(10,14,26,0.92) 0%, rgba(10,14,26,0.78) 100%);
+        border: 1px solid var(--scn-accent, #2B4569);
+        border-radius: 10px;
+        font-family: "JetBrains Mono", "SFMono-Regular", monospace;
+        color: #AFC1D6; font-size: 12px;
+        box-shadow: 0 0 40px rgba(0,0,0,0.5);
+        display: none;
+      }
+      #scenario-side.visible { display: block; }
+      #scenario-side .head {
+        padding: 10px 14px; border-bottom: 1px solid #1F3552;
+        color: var(--scn-accent, #9CDCFE); font-weight: 600;
+        display: flex; align-items: center; justify-content: space-between;
+      }
+      #scenario-side .head .dot {
+        width: 8px; height: 8px; border-radius: 50%;
+        background: var(--scn-accent, #3FA7FF);
+        box-shadow: 0 0 8px var(--scn-accent, #3FA7FF);
+        animation: scn-pulse 1.6s ease-in-out infinite;
+      }
+      @keyframes scn-pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+      #scenario-side .stages { padding: 8px 0; max-height: 30vh; overflow-y: auto; }
+      #scenario-side .stage-item {
+        padding: 6px 14px; display: flex; align-items: center; gap: 8px;
+        color: #6E89A8;
+      }
+      #scenario-side .stage-item.active { color: #FFD479; background: rgba(255,212,121,0.06); }
+      #scenario-side .stage-item.done { color: #6FCF97; }
+      #scenario-side .stage-item .ix {
+        width: 18px; height: 18px; border-radius: 4px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 10px; flex-shrink: 0;
+        border: 1px solid currentColor;
+      }
+      #scenario-side .log {
+        padding: 8px 14px; border-top: 1px solid #1F3552;
+        max-height: 24vh; overflow-y: auto;
+        font-size: 11px; color: #6E89A8; line-height: 1.6;
+      }
+      #scenario-side .log .line { white-space: pre-wrap; word-break: break-all; }
+      #scenario-side .log .line.ok { color: #6FCF97; }
+      #scenario-side .log .line.warn { color: #FFD479; }
+      #scenario-side .log .line.err { color: #FF6363; }
+      #scenario-side .foot {
+        padding: 8px 14px; border-top: 1px solid #1F3552;
+        font-size: 11px; color: #6E89A8;
+      }
+      #scenario-side .foot .key {
+        display: inline-block; padding: 1px 6px; margin: 0 2px;
+        border: 1px solid #2B4569; border-radius: 3px; color: #9CDCFE;
+      }
+    </style>
+
+    <div id="scenario-intro">
+      <video id="scenario-intro-video" playsinline preload="auto" style="display:none"></video>
+      <canvas id="scenario-intro-canvas" style="display:none"></canvas>
+      <div class="briefing-card" id="scenario-intro-briefing" style="display:none"></div>
+      <button class="skip" id="scenario-intro-skip">跳过 ▶</button>
+      <div class="caption" id="scenario-intro-caption" style="display:none"></div>
+    </div>
+    <div id="scenario-side"></div>
+    <div id="scenario-hud"></div>
+    <div id="scenario-panel"><div class="term" id="scenario-term"></div></div>
+    <div id="scenario-toast"></div>
+
+    <script>
+      (function () {
+        if (!window.__GAME_SCENARIO__ || !window.__GAME_SCENARIO__.payload) return;
+        var payload = window.__GAME_SCENARIO__.payload;
+        var stages = Array.isArray(payload.stages) ? payload.stages : [];
+        if (!stages.length) return;
+
+        var hud = document.getElementById('scenario-hud');
+        var panel = document.getElementById('scenario-panel');
+        var term = document.getElementById('scenario-term');
+        var toast = document.getElementById('scenario-toast');
+        var intro = document.getElementById('scenario-intro');
+        var introVideo = document.getElementById('scenario-intro-video');
+        var introSkip = document.getElementById('scenario-intro-skip');
+        var introCaption = document.getElementById('scenario-intro-caption');
+
+        // ── 场景配套开场（视频或文字简报，永远遮住 bundle 内置 intro.mp4）──────────
+        var introUrl = payload.intro_video
+          || (payload.narrative && payload.narrative.introVideo)
+          || (payload.meta && payload.meta.introVideo)
+          || null;
+        var briefingCard = document.getElementById('scenario-intro-briefing');
+        var introCanvas = document.getElementById('scenario-intro-canvas');
+        intro.classList.add('visible');
+        var introRafId = null;
+        var hideIntro = function () {
+          intro.classList.remove('visible');
+          try { introVideo.pause(); } catch (e) {}
+          if (introRafId) { cancelAnimationFrame(introRafId); introRafId = null; }
+        };
+        introSkip.addEventListener('click', hideIntro);
+
+        if (introUrl) {
+          introVideo.style.display = 'block';
+          introCaption.style.display = 'block';
+          introVideo.src = introUrl;
+          introCaption.textContent =
+            (payload.meta && payload.meta.name) || window.__GAME_SCENARIO__.name || '场景任务简报';
+          introVideo.addEventListener('ended', hideIntro);
+          introVideo.addEventListener('error', function () {
+            // 视频加载失败 → 退化到 Canvas 动画
+            introVideo.style.display = 'none';
+            introCaption.style.display = 'none';
+            renderCanvasIntro();
+          });
+          introVideo.muted = false;
+          introVideo.play().catch(function () {
+            introVideo.muted = true;
+            introVideo.play().catch(function () {});
+          });
+        } else {
+          renderCanvasIntro();
+        }
+
+        // ── Canvas 程序化生成开场动画（按场景元数据自动适配主题） ─────────────────
+        function renderCanvasIntro() {
+          introCanvas.style.display = 'block';
+          introCaption.style.display = 'block';
+          var meta = payload.meta || {};
+          var narrative = payload.narrative || {};
+          var name = meta.name || window.__GAME_SCENARIO__.name || '场景任务';
+          var domain = (meta.domain || '').toLowerCase();
+          var difficulty = meta.difficulty || '';
+          var briefing = narrative.briefing || narrative.summary || '';
+          var stageTitles = stages.map(function (s, i) {
+            return (s.title || s.id || ('阶段 ' + (i + 1)));
+          });
+          introCaption.textContent = name;
+
+          // 按 domain 选主题色
+          var themeMap = {
+            storage:  { primary: '#3FA7FF', accent: '#FFD479', glyph: '◆' },
+            network:  { primary: '#6FCF97', accent: '#9CDCFE', glyph: '⬢' },
+            compute:  { primary: '#BB86FC', accent: '#FFD479', glyph: '▣' },
+            security: { primary: '#FF6363', accent: '#FFD479', glyph: '⛨' },
+            ai:       { primary: '#9CDCFE', accent: '#BB86FC', glyph: '✦' },
+            default:  { primary: '#3FA7FF', accent: '#FFD479', glyph: '◆' }
+          };
+          var theme = themeMap[domain] || themeMap.default;
+          // 把主题色注入侧边 HUD
+          document.documentElement.style.setProperty('--scn-accent', theme.primary);
+
+          var ctx = introCanvas.getContext('2d');
+          var DPR = window.devicePixelRatio || 1;
+          function resize() {
+            var w = window.innerWidth, h = window.innerHeight;
+            introCanvas.width = w * DPR; introCanvas.height = h * DPR;
+            introCanvas.style.width = w + 'px'; introCanvas.style.height = h + 'px';
+            ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+          }
+          resize();
+          window.addEventListener('resize', resize);
+
+          // 网格粒子（背景）
+          var particles = [];
+          for (var i = 0; i < 80; i++) {
+            particles.push({
+              x: Math.random() * window.innerWidth,
+              y: Math.random() * window.innerHeight,
+              vx: (Math.random() - 0.5) * 0.4,
+              vy: (Math.random() - 0.5) * 0.4,
+              r: Math.random() * 1.6 + 0.4
+            });
+          }
+          // 节点拓扑（按阶段数）
+          var nodes = stageTitles.map(function (t, i) {
+            var n = stageTitles.length;
+            return { angle: (i / n) * Math.PI * 2 - Math.PI / 2, label: t, idx: i };
+          });
+
+          var t0 = performance.now();
+          var DURATION = 8500; // ms
+          function frame(now) {
+            var t = now - t0;
+            var p = Math.min(1, t / DURATION);
+            var w = window.innerWidth, h = window.innerHeight;
+            // 背景渐变
+            var g = ctx.createRadialGradient(w/2, h/2, 0, w/2, h/2, Math.max(w, h)/1.2);
+            g.addColorStop(0, '#0E1828');
+            g.addColorStop(1, '#05080F');
+            ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+
+            // 网格
+            ctx.strokeStyle = 'rgba(63,167,255,0.06)'; ctx.lineWidth = 1;
+            for (var x = 0; x < w; x += 60) {
+              ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+            }
+            for (var y = 0; y < h; y += 60) {
+              ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+            }
+
+            // 粒子
+            ctx.fillStyle = theme.primary;
+            for (var i2 = 0; i2 < particles.length; i2++) {
+              var pt = particles[i2];
+              pt.x += pt.vx; pt.y += pt.vy;
+              if (pt.x < 0) pt.x = w; if (pt.x > w) pt.x = 0;
+              if (pt.y < 0) pt.y = h; if (pt.y > h) pt.y = 0;
+              ctx.globalAlpha = 0.4;
+              ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.r, 0, Math.PI * 2); ctx.fill();
+            }
+            ctx.globalAlpha = 1;
+
+            // 中央拓扑动画
+            var cx = w / 2, cy = h / 2;
+            var R = Math.min(w, h) * 0.22;
+            // 外环 — 渐入
+            var ringP = Math.min(1, p / 0.25);
+            ctx.strokeStyle = theme.primary;
+            ctx.lineWidth = 1.5;
+            ctx.globalAlpha = ringP * 0.6;
+            ctx.beginPath();
+            ctx.arc(cx, cy, R, -Math.PI/2, -Math.PI/2 + ringP * Math.PI * 2);
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+
+            // 节点 — 依次出现 + 连线
+            var nodeP = Math.max(0, (p - 0.2) / 0.5);
+            for (var i3 = 0; i3 < nodes.length; i3++) {
+              var n = nodes[i3];
+              var nApp = Math.max(0, Math.min(1, nodeP * nodes.length - i3));
+              if (nApp <= 0) continue;
+              var nx = cx + Math.cos(n.angle) * R;
+              var ny = cy + Math.sin(n.angle) * R;
+              // 连线到中心
+              ctx.strokeStyle = theme.primary;
+              ctx.globalAlpha = nApp * 0.4;
+              ctx.lineWidth = 1;
+              ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(nx, ny); ctx.stroke();
+              // 节点
+              ctx.globalAlpha = nApp;
+              ctx.fillStyle = theme.accent;
+              ctx.beginPath(); ctx.arc(nx, ny, 6, 0, Math.PI * 2); ctx.fill();
+              ctx.fillStyle = '#0A0E1A';
+              ctx.beginPath(); ctx.arc(nx, ny, 3, 0, Math.PI * 2); ctx.fill();
+              // 标签
+              ctx.fillStyle = '#E8EFF7';
+              ctx.font = '12px "JetBrains Mono", monospace';
+              ctx.textAlign = 'center';
+              var lx = cx + Math.cos(n.angle) * (R + 24);
+              var ly = cy + Math.sin(n.angle) * (R + 24) + 4;
+              ctx.fillText((i3 + 1) + '. ' + n.label.slice(0, 14), lx, ly);
+            }
+            ctx.globalAlpha = 1;
+
+            // 中央 glyph + 标题
+            var titleP = Math.min(1, Math.max(0, (p - 0.05) / 0.3));
+            ctx.globalAlpha = titleP;
+            ctx.fillStyle = theme.accent;
+            ctx.font = '64px "JetBrains Mono", monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText(theme.glyph, cx, cy - 4);
+
+            // 标题（打字机效果）
+            var titleStartP = 0.35;
+            if (p > titleStartP) {
+              var typeP = Math.min(1, (p - titleStartP) / 0.25);
+              var visibleLen = Math.floor(name.length * typeP);
+              ctx.fillStyle = '#E8EFF7';
+              ctx.font = 'bold 32px "Inter","Noto Sans SC",sans-serif';
+              ctx.fillText(name.slice(0, visibleLen) + (typeP < 1 && (Math.floor(t/300)%2) ? '▋' : ''), cx, cy + R + 70);
+            }
+
+            // 副标题（briefing 摘要）
+            if (p > 0.55) {
+              var subP = Math.min(1, (p - 0.55) / 0.25);
+              ctx.globalAlpha = subP;
+              ctx.fillStyle = '#AFC1D6';
+              ctx.font = '15px "Inter","Noto Sans SC",sans-serif';
+              var summary = briefing.slice(0, 60) + (briefing.length > 60 ? '…' : '');
+              wrapText(ctx, summary, cx, cy + R + 110, w * 0.6, 22);
+            }
+
+            // 底部 — 进度条 + 提示
+            ctx.globalAlpha = 1;
+            var barW = 320, barH = 3, barX = cx - barW/2, barY = h - 80;
+            ctx.fillStyle = 'rgba(63,167,255,0.15)';
+            ctx.fillRect(barX, barY, barW, barH);
+            ctx.fillStyle = theme.primary;
+            ctx.fillRect(barX, barY, barW * p, barH);
+
+            ctx.fillStyle = '#6E89A8';
+            ctx.font = '11px "JetBrains Mono", monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText('LOADING SCENARIO · ' + (difficulty ? '难度 ' + difficulty.toUpperCase() : '') + ' · ' + stages.length + ' STAGES', cx, h - 50);
+
+            if (p >= 1) {
+              ctx.globalAlpha = 1;
+              ctx.fillStyle = theme.accent;
+              ctx.font = '13px "JetBrains Mono", monospace';
+              ctx.fillText('▼ 按 E 或 Tab 进入任务终端 ▼', cx, h - 28);
+              // 完成后停在最终帧，等用户按键 / 点击跳过
+              return;
+            }
+            introRafId = requestAnimationFrame(frame);
+          }
+          introRafId = requestAnimationFrame(frame);
+        }
+
+        function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
+          var words = text.split('');
+          var line = '';
+          var ly = y;
+          for (var i = 0; i < words.length; i++) {
+            var test = line + words[i];
+            if (ctx.measureText(test).width > maxWidth && line.length > 0) {
+              ctx.fillText(line, x, ly);
+              line = words[i]; ly += lineHeight;
+            } else { line = test; }
+          }
+          ctx.fillText(line, x, ly);
+        }
+
+        var state = {
+          idx: 0,
+          score: 0,
+          maxScore: payload.scoring && payload.scoring.maxScore != null
+            ? payload.scoring.maxScore
+            : (payload.maxScore != null ? payload.maxScore : 100),
+          passingScore: payload.scoring && payload.scoring.passingScore != null
+            ? payload.scoring.passingScore
+            : (payload.passScore != null ? payload.passScore : 70),
+          // 每阶段答题状态：{ [stageIdx]: { [qid]: { picked, evaluated, awarded } } }
+          stageState: {},
+          completed: false,
+        };
+
+        function fmtScore() { return state.score + ' / ' + state.maxScore; }
+        function curStage() { return stages[state.idx]; }
+
+        // ── 场景侧边 HUD（覆盖游戏自带 V2V 视觉，按 stage 进展渲染） ─────────────
+        var side = document.getElementById('scenario-side');
+        var sideLogs = []; // { kind, text, ts }
+        function sideLog(text, kind) {
+          sideLogs.push({ kind: kind || 'info', text: text });
+          if (sideLogs.length > 60) sideLogs.shift();
+          renderSide();
+        }
+        function renderSide() {
+          if (state.completed && stages.length === state.idx) {
+            // 完成后保留可读
+          }
+          var meta = payload.meta || {};
+          var title = meta.name || window.__GAME_SCENARIO__.name || '场景任务';
+          var stageHtml = stages.map(function (s, i) {
+            var cls = i < state.idx ? 'done' : (i === state.idx ? 'active' : '');
+            var mark = i < state.idx ? '✓' : (i === state.idx ? '▶' : (i + 1));
+            return '<div class="stage-item ' + cls + '"><span class="ix">' + mark + '</span>' +
+                   '<span>' + escapeHtml(s.title || s.id || ('阶段 ' + (i + 1))) + '</span></div>';
+          }).join('');
+          var logHtml = sideLogs.slice(-12).map(function (l) {
+            return '<div class="line ' + escapeHtml(l.kind) + '">› ' + escapeHtml(l.text) + '</div>';
+          }).join('') || '<div class="line">› 等待任务推进…</div>';
+          side.innerHTML =
+            '<div class="head"><span>' + escapeHtml(title.slice(0, 22)) + '</span><span class="dot"></span></div>' +
+            '<div class="stages">' + stageHtml + '</div>' +
+            '<div class="log">' + logHtml + '</div>' +
+            '<div class="foot">分数 <strong style="color:#FFD479">' + fmtScore() + '</strong> · ' +
+              '<span class="key">E</span>推进 <span class="key">Tab</span>切换</div>';
+          side.classList.add('visible');
+        }
+
+        function renderHud() {
+          if (state.completed) { hud.classList.remove('visible'); return; }
+          var s = curStage();
+          if (!s) return;
+          hud.innerHTML =
+            '【任务】<span class="step">' + (state.idx + 1) + '/' + stages.length + ' · ' + (s.title || s.id) + '</span>' +
+            '<span class="hint">按 E 开始/推进任务 · Tab 关闭面板 · 分数 ' + fmtScore() + '</span>';
+          hud.classList.add('visible');
+          renderSide();
+        }
+
+        function ensureStageState(idx) {
+          if (!state.stageState[idx]) state.stageState[idx] = {};
+          return state.stageState[idx];
+        }
+
+        function escapeHtml(s) {
+          return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        function renderPanel() {
+          var s = curStage();
+          if (!s) { renderComplete(); return; }
+          var ss = ensureStageState(state.idx);
+          var html = '';
+          html += '<header>';
+          html += '<h2>' + escapeHtml(payload.meta && payload.meta.name || window.__GAME_SCENARIO__.name || '场景任务') + '</h2>';
+          html += '<span class="progress">阶段 ' + (state.idx + 1) + ' / ' + stages.length + '</span>';
+          html += '<span class="score">分数 ' + fmtScore() + '</span>';
+          html += '</header>';
+          html += '<div class="stage-type">' + escapeHtml(s.type || 'stage') + '</div>';
+          html += '<div class="stage-title">' + escapeHtml(s.title || s.id) + '</div>';
+          if (s.description) html += '<div class="stage-desc">' + escapeHtml(s.description) + '</div>';
+          if (s.briefing) html += '<div class="stage-desc">' + escapeHtml(s.briefing) + '</div>';
+
+          html += '<div class="stage-body">';
+          var hasQuestions = Array.isArray(s.questions) && s.questions.length;
+          if (hasQuestions) {
+            s.questions.forEach(function (q) {
+              html += '<p class="qstem">' + escapeHtml(q.stem || q.prompt || '') + '</p>';
+              var opts = q.options || [];
+              var qst = ss[q.id] || {};
+              opts.forEach(function (opt) {
+                var key = opt.key != null ? opt.key : opt.id;
+                var label = opt.label != null ? opt.label : opt.text;
+                var cls = 'qopt';
+                if (qst.evaluated) {
+                  var correct = q.correctAnswer;
+                  var isCorrect = Array.isArray(correct) ? correct.indexOf(key) >= 0 : correct === key;
+                  var picked = Array.isArray(qst.picked) ? qst.picked.indexOf(key) >= 0 : qst.picked === key;
+                  if (isCorrect) cls += ' correct';
+                  else if (picked) cls += ' wrong';
+                } else {
+                  var picked2 = Array.isArray(qst.picked) ? qst.picked.indexOf(key) >= 0 : qst.picked === key;
+                  if (picked2) cls += ' selected';
+                }
+                html += '<label class="' + cls + '" data-q="' + escapeHtml(q.id) + '" data-k="' + escapeHtml(key) + '" data-multi="' + (q.type === 'multi' ? '1' : '0') + '">';
+                html += '<strong>' + escapeHtml(key) + '.</strong> ' + escapeHtml(label);
+                html += '</label>';
+              });
+              if (q.hint && !qst.evaluated) html += '<div class="qhint">💡 ' + escapeHtml(q.hint) + '</div>';
+              if (qst.evaluated && q.explanation) {
+                html += '<div class="qexp">📘 ' + escapeHtml(q.explanation) +
+                  (qst.awarded != null ? '（本题得分：' + qst.awarded + '）' : '') + '</div>';
+              }
+            });
+          } else {
+            // 非答题阶段：briefing / action / validate / summary
+            html += '<p class="qstem" style="color:#AFC1D6">' +
+              escapeHtml(s.prompt || s.message || '按 E 执行此阶段操作。') + '</p>';
+          }
+          html += '</div>';
+
+          html += '<footer>';
+          var allEvaluated = !hasQuestions || s.questions.every(function (q) { return (ss[q.id] || {}).evaluated; });
+          if (hasQuestions && !allEvaluated) {
+            html += '<span class="key">E</span><span class="label">提交本阶段答题并评分</span>';
+          } else {
+            html += '<span class="key">E</span><span class="label">' +
+              (state.idx + 1 >= stages.length ? '完成训练并提交分数' : '推进到下一阶段') + '</span>';
+          }
+          html += '<div style="flex:1"></div>';
+          html += '<span class="key">Tab</span><span class="label">关闭面板</span>';
+          html += '</footer>';
+
+          term.innerHTML = html;
+
+          // 选项点击
+          term.querySelectorAll('.qopt').forEach(function (el) {
+            el.addEventListener('click', function () {
+              var qid = el.getAttribute('data-q');
+              var key = el.getAttribute('data-k');
+              var multi = el.getAttribute('data-multi') === '1';
+              var qst = ss[qid] || (ss[qid] = {});
+              if (qst.evaluated) return;
+              if (multi) {
+                if (!Array.isArray(qst.picked)) qst.picked = [];
+                var i = qst.picked.indexOf(key);
+                if (i >= 0) qst.picked.splice(i, 1); else qst.picked.push(key);
+              } else {
+                qst.picked = key;
+              }
+              renderPanel();
+            });
+          });
+        }
+
+        function evaluateStage() {
+          var s = curStage();
+          if (!s) return;
+          var ss = ensureStageState(state.idx);
+          if (!Array.isArray(s.questions) || !s.questions.length) return true; // 非答题阶段
+          var allEvaluated = s.questions.every(function (q) { return (ss[q.id] || {}).evaluated; });
+          if (allEvaluated) return true; // 已评过
+
+          s.questions.forEach(function (q) {
+            var qst = ss[q.id] || (ss[q.id] = {});
+            if (qst.evaluated) return;
+            var correct = q.correctAnswer;
+            var picked = qst.picked;
+            var ok;
+            if (Array.isArray(correct)) {
+              var pickedArr = Array.isArray(picked) ? picked.slice().sort() : [];
+              var correctArr = correct.slice().sort();
+              ok = pickedArr.length === correctArr.length &&
+                   pickedArr.every(function (k, i) { return k === correctArr[i]; });
+            } else {
+              ok = picked === correct;
+            }
+            qst.evaluated = true;
+            qst.awarded = ok ? (q.points || 0) : 0;
+            state.score += qst.awarded;
+            sideLog((ok ? '✓ ' : '✗ ') + (q.id || 'q') + ' · +' + qst.awarded + '分', ok ? 'ok' : 'err');
+          });
+          return false; // 刚评分，先停留显示结果
+        }
+
+        function advance() {
+          var s = curStage();
+          if (!s) return;
+          var ss = ensureStageState(state.idx);
+          var hasQ = Array.isArray(s.questions) && s.questions.length;
+
+          if (hasQ) {
+            var allEvaluated = s.questions.every(function (q) { return (ss[q.id] || {}).evaluated; });
+            if (!allEvaluated) {
+              // 检查是否所有题都已选
+              var allPicked = s.questions.every(function (q) {
+                var qst = ss[q.id] || {};
+                if (q.type === 'multi') return Array.isArray(qst.picked) && qst.picked.length > 0;
+                return qst.picked != null;
+              });
+              if (!allPicked) {
+                showToast('请先选择所有题目的答案', true);
+                return;
+              }
+              evaluateStage();
+              renderPanel();
+              return;
+            }
+          } else {
+            // 非答题阶段：累加阶段权重作为分数
+            var w = s.weight != null ? s.weight : 0;
+            state.score += w;
+            if (w) sideLog('阶段完成 · +' + w + '分', 'ok');
+          }
+
+          // 推进到下一阶段
+          state.idx += 1;
+          if (state.idx >= stages.length) {
+            sideLog('所有阶段完成，生成复盘报告…', 'ok');
+            renderComplete();
+          } else {
+            sideLog('进入阶段 ' + (state.idx + 1) + '/' + stages.length + ' · ' + (curStage().title || curStage().id), 'info');
+            renderHud();
+            renderPanel();
+          }
+        }
+
+        function showToast(msg, isFail) {
+          toast.textContent = msg;
+          toast.classList.toggle('fail', !!isFail);
+          toast.classList.add('visible');
+          setTimeout(function () { toast.classList.remove('visible'); }, 1800);
+        }
+
+        function renderComplete() {
+          state.completed = true;
+          var passed = state.score >= state.passingScore;
+          sideLog(passed ? '训练完成 ✓ · ' + fmtScore() : '未达标✕ · ' + fmtScore(), passed ? 'ok' : 'err');
+          renderSide();
+          hud.classList.remove('visible');
+          term.innerHTML =
+            '<header><h2>训练' + (passed ? '完成 ✓' : '未通过 ✗') + '</h2>' +
+            '<span class="score">最终分数 ' + fmtScore() + '</span></header>' +
+            '<div class="stage-title">' + escapeHtml(payload.meta && payload.meta.name || '场景训练') + '</div>' +
+            '<div class="stage-desc">' +
+            (passed
+              ? escapeHtml((payload.narrative && payload.narrative.successMsg) || payload.successMsg || '恭喜，所有阶段已通过！分数已提交至平台。')
+              : escapeHtml((payload.narrative && payload.narrative.failureMsg) || payload.failureMsg || '部分阶段未达标，建议复盘后重练。')
+            ) +
+            '</div>' +
+            '<div class="stage-body">' +
+            '<p class="qstem">通过线：' + state.passingScore + ' · 你的分数：' + state.score + '</p>' +
+            '</div>' +
+            '<footer><button onclick="location.reload()">重新开始</button>' +
+            '<button class="ghost" onclick="window.close ? window.close() : history.back()">返回平台</button></footer>';
+          panel.classList.add('visible');
+
+          // 上报分数
+          try {
+            if (typeof window.__OMNI_REPORT_VICTORY__ === 'function') {
+              window.__OMNI_REPORT_VICTORY__(state.score, {
+                scenario_id: window.__GAME_SCENARIO__.scenario_id,
+                passed: passed,
+                stages: stages.length,
+                source: 'scenario_terminal',
+              });
+            }
+          } catch (e) { console.warn('[scenario] report failed', e); }
+        }
+
+        function togglePanel() {
+          if (state.completed) { panel.classList.add('visible'); return; }
+          panel.classList.toggle('visible');
+          if (panel.classList.contains('visible')) renderPanel();
+        }
+
+        // 键盘事件用 capture 阶段抢先处理，且 stopImmediatePropagation
+        // 彻底屏蔽游戏 bundle 自带的 V2V E 键交互（连接 vCenter 等老流程）。
+        // 在场景模式下，E 键完全由本覆盖层接管：
+        //   - 面板未开 → 打开面板 + 渲染当前阶段
+        //   - 面板已开 → 推进 / 评分 / 跳到下一阶段
+        window.addEventListener('keydown', function (ev) {
+          // intro 播放期间，E 跳过开场视频
+          if (intro.classList.contains('visible')) {
+            if (ev.code === 'KeyE' || ev.code === 'Tab' || ev.code === 'Escape') {
+              ev.preventDefault();
+              ev.stopPropagation();
+              ev.stopImmediatePropagation();
+              intro.classList.remove('visible');
+              try { introVideo.pause(); } catch (e) {}
+            }
+            return;
+          }
+          if (ev.code === 'KeyE') {
+            // 全程拦截，无论面板是否打开
+            ev.preventDefault();
+            ev.stopPropagation();
+            ev.stopImmediatePropagation();
+            if (state.completed) { panel.classList.add('visible'); return; }
+            if (!panel.classList.contains('visible')) {
+              panel.classList.add('visible');
+              renderPanel();
+            } else {
+              advance();
+            }
+            return;
+          }
+          if (ev.code === 'Tab') {
+            ev.preventDefault();
+            ev.stopPropagation();
+            ev.stopImmediatePropagation();
+            togglePanel();
+            return;
+          }
+        }, true);
+
+        renderHud();
+        sideLog('场景已加载 · ' + (payload.meta && payload.meta.name || ''), 'ok');
+        sideLog('共 ' + stages.length + ' 个阶段 · 通过分 ' + state.passingScore, 'info');
+        renderSide();
+        // 启动后显示一次提示（intro 在播则延后）
+        setTimeout(function () {
+          if (!panel.classList.contains('visible') && !state.completed && !intro.classList.contains('visible')) {
+            showToast('按 E 开始任务', false);
+          }
+        }, 1500);
+      })();
+    </script>
+  </body>
+</html>

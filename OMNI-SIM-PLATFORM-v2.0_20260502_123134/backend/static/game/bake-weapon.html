@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<!--
+  bake-weapon.html — 一次性武器 GLB 烘焙工具
+  =============================================
+  用途：在浏览器中将 WeaponViewmodel 的程序化几何体导出为 smg.glb，
+  供 WeaponViewmodel.loadAsync('/assets/weapons/smg.glb') 加载。
+
+  使用方法：
+    1. 确保开发服务器已启动：cd client && pnpm dev
+    2. 浏览器打开：http://localhost:5173/bake-weapon.html
+    3. 点击 "Bake & Download smg.glb" 按钮
+    4. 将下载的 smg.glb 放到：client/public/assets/weapons/smg.glb
+    5. 刷新游戏，武器将从 GLB 加载（可被更高质量资产替换）
+
+  注意：此页面使用 CDN three.js r160 与主项目版本匹配。
+  生产环境不需要此文件。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Weapon GLB Baker</title>
+  <style>
+    body {
+      margin: 0;
+      background: #0d1117;
+      color: #c9d1d9;
+      font-family: 'Segoe UI', system-ui, monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      gap: 24px;
+    }
+    h1 { color: #58a6ff; font-size: 1.4rem; margin: 0; }
+    p  { color: #8b949e; max-width: 520px; text-align: center; line-height: 1.6; }
+    canvas { border: 1px solid #30363d; border-radius: 6px; }
+    button {
+      background: #238636;
+      color: #fff;
+      border: none;
+      padding: 10px 24px;
+      font-size: 1rem;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    button:hover { background: #2ea043; }
+    button:disabled { background: #3d4451; cursor: not-allowed; }
+    #log {
+      font-family: monospace;
+      font-size: 0.82rem;
+      color: #8b949e;
+      max-width: 520px;
+      text-align: left;
+      white-space: pre-line;
+    }
+    .ok   { color: #56d364; }
+    .warn { color: #e3b341; }
+    .err  { color: #f85149; }
+  </style>
+</head>
+<body>
+  <h1>⚙ Weapon GLB Baker</h1>
+  <p>
+    将当前程序化 SMG 武器导出为 <code>smg.glb</code>，
+    放到 <code>client/public/assets/weapons/smg.glb</code> 后游戏将优先加载 GLB。
+  </p>
+  <canvas id="preview" width="400" height="300"></canvas>
+  <button id="bakeBtn">Bake &amp; Download smg.glb</button>
+  <div id="log">准备就绪。点击上方按钮开始烘焙。</div>
+
+  <!-- three.js r160 via CDN (与项目版本匹配) -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.1/examples/jsm/"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    const log = document.getElementById('log');
+    function print(msg, cls = '') {
+      const line = document.createElement('span');
+      if (cls) line.className = cls;
+      line.textContent = '\n' + msg;
+      log.appendChild(line);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    /* ── 预览渲染器 ── */
+    const canvas  = document.getElementById('preview');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(400, 300);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.8;
+
+    const previewScene  = new THREE.Scene();
+    previewScene.background = new THREE.Color(0x1a2030);
+    const previewCamera = new THREE.PerspectiveCamera(55, 400/300, 0.01, 20);
+    previewCamera.position.set(0.4, 0.0, 0.8);
+
+    const controls = new OrbitControls(previewCamera, canvas);
+    controls.enableDamping = true;
+
+    // 照明
+    previewScene.add(new THREE.AmbientLight(0xffffff, 1.4));
+    const key = new THREE.DirectionalLight(0xffffff, 2.0);
+    key.position.set(2, 3, 2);
+    previewScene.add(key);
+    const fill = new THREE.DirectionalLight(0x8899cc, 0.7);
+    fill.position.set(-2, 1, -1);
+    previewScene.add(fill);
+
+    /* ── 程序化 SMG 几何体（镜像自 WeaponViewmodel._buildWeapon） ── */
+
+    const gunMetal = new THREE.MeshPhysicalMaterial({
+      color: 0x5a6673, metalness: 0.90, roughness: 0.22,
+      clearcoat: 0.65, clearcoatRoughness: 0.14,
+    });
+    const gunMetal2 = new THREE.MeshPhysicalMaterial({
+      color: 0x44505d, metalness: 0.94, roughness: 0.16,
+      clearcoat: 0.85, clearcoatRoughness: 0.10,
+    });
+    const polymerDark = new THREE.MeshPhysicalMaterial({
+      color: 0x252b34, metalness: 0.12, roughness: 0.62, clearcoat: 0.20,
+    });
+    const magMat = new THREE.MeshStandardMaterial({
+      color: 0x3d4a58, metalness: 0.76, roughness: 0.34,
+    });
+    const gloveMat = new THREE.MeshStandardMaterial({
+      color: 0x343e49, roughness: 0.86, metalness: 0.03,
+    });
+
+    function add(scene, geo, mat, px=0, py=0, pz=0, rx=0, ry=0, rz=0) {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(px, py, pz);
+      if (rx || ry || rz) m.rotation.set(rx, ry, rz);
+      scene.add(m);
+      return m;
+    }
+
+    function buildWeapon() {
+      const g = new THREE.Group();
+      g.scale.setScalar(1.5);
+
+      /* 枪身主体 */
+      add(g, new THREE.BoxGeometry(0.14, 0.085, 0.32), gunMetal);
+      add(g, new THREE.BoxGeometry(0.10, 0.046, 0.24), polymerDark, 0, -0.043, -0.02);
+      add(g, new THREE.BoxGeometry(0.040, 0.013, 0.30), gunMetal2, 0, 0.049, -0.01);
+
+      /* 护木 */
+      const shroud = new THREE.Mesh(new THREE.CylinderGeometry(0.027, 0.027, 0.24, 12, 1), gunMetal);
+      shroud.rotation.x = Math.PI / 2;
+      shroud.position.set(0, 0.008, -0.18);
+      g.add(shroud);
+
+      /* 枪管 */
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.30, 10), gunMetal2);
+      barrel.rotation.x = Math.PI / 2;
+      barrel.position.set(0, 0.008, -0.265);
+      g.add(barrel);
+
+      /* 消焰器 */
+      const flash = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.012, 0.045, 8), gunMetal);
+      flash.rotation.x = Math.PI / 2;
+      flash.position.set(0, 0.008, -0.395);
+      flash.name = 'muzzle_flash'; // 约定骨骼名
+      g.add(flash);
+
+      /* 枪托 */
+      add(g, new THREE.BoxGeometry(0.10, 0.068, 0.10), polymerDark, 0, 0.002, 0.21);
+      add(g, new THREE.BoxGeometry(0.022, 0.08, 0.12), polymerDark, -0.04, -0.01, 0.23, 0, 0, 0.12);
+
+      /* 弹匣 */
+      add(g, new THREE.BoxGeometry(0.055, 0.135, 0.042), magMat, 0, -0.105, -0.005);
+
+      /* 握把 */
+      add(g, new THREE.BoxGeometry(0.058, 0.10, 0.046), polymerDark, 0.002, -0.088, 0.06, 0.30, 0, 0);
+
+      /* 瞄具座 */
+      add(g, new THREE.BoxGeometry(0.034, 0.028, 0.080), gunMetal2, 0, 0.077, -0.055);
+
+      /* 战术手电 */
+      const torch = new THREE.Mesh(new THREE.CylinderGeometry(0.010, 0.010, 0.065, 8), gunMetal2);
+      torch.rotation.x = Math.PI / 2;
+      torch.position.set(0.04, -0.01, -0.165);
+      g.add(torch);
+
+      /* 右手 */
+      add(g, new THREE.BoxGeometry(0.046, 0.068, 0.060), gloveMat, 0.012, -0.088, 0.065);
+      add(g, new THREE.BoxGeometry(0.030, 0.020, 0.056), gloveMat, 0.015, -0.115, 0.068);
+
+      /* 左手 */
+      const leftHand = new THREE.Group();
+      leftHand.name = 'hand_l'; // IK 目标约定命名
+      add(leftHand, new THREE.BoxGeometry(0.050, 0.055, 0.075), gloveMat);
+      add(leftHand, new THREE.BoxGeometry(0.022, 0.048, 0.020), gloveMat, -0.030, -0.040, 0.012);
+      leftHand.position.set(-0.010, 0.004, -0.22);
+      g.add(leftHand);
+
+      return g;
+    }
+
+    const weaponGroup = buildWeapon();
+    // 将 weapon 放到单独的导出 scene（不含灯光/相机）
+    const exportScene = new THREE.Scene();
+    exportScene.add(weaponGroup);
+
+    // 预览
+    previewScene.add(weaponGroup.clone());
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(previewScene, previewCamera);
+    }
+    animate();
+
+    /* ── 导出逻辑 ── */
+    const btn = document.getElementById('bakeBtn');
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.textContent = '烘焙中…';
+      print('▶ 开始导出 GLB…');
+
+      const exporter = new GLTFExporter();
+      try {
+        const glb = await new Promise((resolve, reject) => {
+          exporter.parse(
+            exportScene,
+            resolve,
+            reject,
+            { binary: true, onlyVisible: true },
+          );
+        });
+
+        const blob = new Blob([glb], { type: 'model/gltf-binary' });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href     = url;
+        a.download = 'smg.glb';
+        a.click();
+        URL.revokeObjectURL(url);
+
+        const kb = (glb.byteLength / 1024).toFixed(1);
+        print(`✓ 导出成功 (${kb} KB)。请将 smg.glb 放到：`, 'ok');
+        print('  client/public/assets/weapons/smg.glb', 'ok');
+        print('然后刷新游戏页面即可加载 GLB 武器。', 'ok');
+        btn.textContent = '✓ 导出完成';
+      } catch (err) {
+        print('✗ 导出失败：' + err, 'err');
+        btn.disabled = false;
+        btn.textContent = 'Bake & Download smg.glb';
+      }
+    });
+
+    print('场景预览已就绪。用鼠标旋转查看武器模型。');
+  </script>
+</body>
+</html>
