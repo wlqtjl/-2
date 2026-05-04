@@ -1,0 +1,415 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://omni-sim.local/schemas/fps-mission-v1.json",
+  "title": "OMNI-SIM FPS Mission DSL v1",
+  "description": "Data-driven contract for the OMNI-SIM FPS bundle. One JSON file fully specifies a training campaign: intro video, scene layout, character/weapon assets, mission acts, E-key interactables, scoring, and narration. The pre-compiled engine (backend/static/game/assets/index-*.js) reads exactly one of these documents from window.__GAME_MISSION__ at boot and renders it; *no engine code change* is required to author a new training topic.",
+  "type": "object",
+  "required": ["dslVersion", "id", "meta", "intro", "scene", "acts", "scoring"],
+  "additionalProperties": false,
+
+  "properties": {
+    "$schema":   { "type": "string", "description": "Allow IDE-only schema reference at the document root." },
+    "dslVersion": {
+      "const": "1.0",
+      "description": "Schema version. Bumped on breaking changes."
+    },
+
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{2,}$",
+      "description": "Unique slug, e.g. 'smartx-v2v-fps-v1'."
+    },
+
+    "meta": {
+      "type": "object",
+      "required": ["name", "domain"],
+      "additionalProperties": false,
+      "properties": {
+        "name":      { "type": "string", "description": "Mission display name. Replaces hardcoded <title> in index.html." },
+        "subtitle":  { "type": "string" },
+        "domain":    { "type": "string", "description": "Training domain: 'v2v-migration' | 'hci-iops' | 'security' | ..." },
+        "version":   { "type": "string", "default": "1.0.0" },
+        "language":  { "type": "string", "default": "zh-CN" },
+        "vars": {
+          "type": "object",
+          "description": "Free-form template variables substitutable into any string via {{varName}}. Replaces backend _default_mission_for hardcoded vmId/vmName/dataTotalGB.",
+          "additionalProperties": { "type": ["string", "number", "boolean"] }
+        }
+      }
+    },
+
+    "intro": {
+      "type": "object",
+      "description": "Opening cinematic. Replaces IntroVideo.tsx hardcoded src='/intro.mp4'.",
+      "required": ["videoUrl"],
+      "additionalProperties": false,
+      "properties": {
+        "videoUrl":   { "type": "string", "description": "Absolute or root-relative URL to the intro mp4/webm." },
+        "posterUrl":  { "type": "string" },
+        "durationSec": { "type": "number", "minimum": 1 },
+        "skippable":  { "type": "boolean", "default": true },
+        "subtitles": {
+          "type": "array",
+          "description": "Optional timed subtitles. Use [] when subtitles are baked into the video.",
+          "items": {
+            "type": "object",
+            "required": ["from", "to", "text"],
+            "additionalProperties": false,
+            "properties": {
+              "from": { "type": "number", "minimum": 0 },
+              "to":   { "type": "number", "minimum": 0 },
+              "text": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "scene": {
+      "type": "object",
+      "description": "World layout for the FPS map. The engine instantiates a preset and decorates it with the listed interactables. Replaces RealisticDataCenter.ts hardcoded geometry.",
+      "required": ["preset"],
+      "additionalProperties": false,
+      "properties": {
+        "preset": {
+          "type": "string",
+          "enum": ["datacenter_small", "datacenter_medium", "datacenter_large", "lab", "office", "warehouse"],
+          "description": "Built-in scene preset. Engine ships with these geometries."
+        },
+        "ambient": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "skyColor":       { "type": "string", "description": "CSS hex like '#0A0E1A'." },
+            "fogDensity":     { "type": "number", "minimum": 0, "maximum": 1 },
+            "rackLightColor": { "type": "string" },
+            "ambientSfx":     { "type": "string", "description": "Looping background sfx URL." }
+          }
+        },
+        "spawn": {
+          "type": "object",
+          "required": ["position"],
+          "additionalProperties": false,
+          "properties": {
+            "position": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+            "yaw":      { "type": "number" }
+          }
+        },
+        "characters": {
+          "type": "array",
+          "description": "Player + NPC model bindings. Replaces hardcoded /Soldier.glb.",
+          "items": {
+            "type": "object",
+            "required": ["role", "modelUrl"],
+            "additionalProperties": false,
+            "properties": {
+              "role":     { "type": "string", "enum": ["player", "npc_ally", "npc_enemy_template"] },
+              "modelUrl": { "type": "string" },
+              "scale":    { "type": "number", "default": 1 },
+              "label":    { "type": "string" }
+            }
+          }
+        },
+        "weapons": {
+          "type": "array",
+          "description": "Weapon viewmodel bindings.",
+          "items": {
+            "type": "object",
+            "required": ["slot", "id", "modelUrl"],
+            "additionalProperties": false,
+            "properties": {
+              "slot":     { "type": "integer", "minimum": 1, "maximum": 6 },
+              "id":       { "type": "string" },
+              "name":     { "type": "string" },
+              "modelUrl": { "type": "string" },
+              "kind":     { "type": "string", "enum": ["assault", "shotgun", "sniper", "scanner", "tablet", "tool"] }
+            }
+          }
+        },
+        "interactables": {
+          "type": "array",
+          "description": "E-key interactable objects placed in the scene. The engine's InteractionSystem dispatches onInteract by id. Replaces MissionObjects.DeployPad / VMHologram instantiation.",
+          "items": { "$ref": "#/definitions/interactable" }
+        },
+        "decor": {
+          "type": "array",
+          "description": "Pure-visual scene props (no gameplay). Optional.",
+          "items": {
+            "type": "object",
+            "required": ["modelKey", "position"],
+            "additionalProperties": false,
+            "properties": {
+              "modelKey": { "type": "string", "description": "Engine-built-in prop key, e.g. 'rack_42u' / 'cable_tray' / 'monitor_wallmount'." },
+              "position": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+              "rotationY": { "type": "number" },
+              "scale":     { "type": "number" }
+            }
+          }
+        }
+      }
+    },
+
+    "acts": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Mission acts (chapters). Each act is data, executed by a single GenericPhase in the engine. Replaces phases/EnvScanPhase.ts ... PostCheckPhase.ts and the ACT1..9 enum in MissionNarrator.ts.",
+      "items": { "$ref": "#/definitions/act" }
+    },
+
+    "scoring": {
+      "type": "object",
+      "required": ["maxScore", "passingScore"],
+      "additionalProperties": false,
+      "properties": {
+        "maxScore":     { "type": "integer", "minimum": 1 },
+        "passingScore": { "type": "integer", "minimum": 0 },
+        "rules": {
+          "type": "array",
+          "description": "Score deltas keyed off engine events.",
+          "items": {
+            "type": "object",
+            "required": ["event", "delta"],
+            "additionalProperties": false,
+            "properties": {
+              "event":  { "type": "string", "description": "EventBus event, e.g. 'act:complete' / 'enemy:killed' / 'quiz:correct'." },
+              "match":  { "type": "object", "description": "Optional event-payload filter. Each key must equal-match.", "additionalProperties": true },
+              "delta":  { "type": "integer" },
+              "max":    { "type": "integer", "description": "Cap total contribution from this rule." }
+            }
+          }
+        }
+      }
+    },
+
+    "tutorialTips": {
+      "type": "array",
+      "description": "First-time-action tips. Replaces TutorialPrompts.ts PLAY_TIPS hardcoded body text.",
+      "items": {
+        "type": "object",
+        "required": ["trigger", "title", "body"],
+        "additionalProperties": false,
+        "properties": {
+          "trigger":  { "type": "string", "description": "EventBus event id, e.g. 'weapon:fire' / 'tool:switch' / 'pickup:health'." },
+          "once":     { "type": "boolean", "default": true },
+          "title":    { "type": "string" },
+          "body":     { "type": "string" },
+          "duration": { "type": "integer", "minimum": 500, "default": 4500 }
+        }
+      }
+    },
+
+    "audio": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "missionTitleSfx":     { "type": "string" },
+        "objectiveCompleteSfx":{ "type": "string" },
+        "alertSfx":            { "type": "string" }
+      }
+    }
+  },
+
+  "definitions": {
+
+    "interactable": {
+      "type": "object",
+      "required": ["id", "type", "position"],
+      "additionalProperties": false,
+      "properties": {
+        "id":       { "type": "string", "description": "Unique within the mission." },
+        "type": {
+          "type": "string",
+          "enum": ["console", "deploy_pad", "hologram", "server_rack", "terminal", "door", "pickup_zone"],
+          "description": "Engine prefab key. The InteractableFactory chooses geometry, color, hover ring, etc."
+        },
+        "model":    { "type": "string", "description": "Optional override for prefab model." },
+        "position": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+        "rotationY":{ "type": "number" },
+        "color":    { "type": "string", "description": "Highlight color, e.g. '#00E676' for green console." },
+        "label":    { "type": "string", "description": "World-space label text." },
+        "hoverPrompt": { "type": "string", "description": "Text shown when player looks at the object. Defaults to '按 E 交互'. Use this for '按 E 启动兼容性扫描' etc." },
+        "visibleIf":{ "$ref": "#/definitions/condition", "description": "Object hidden until condition is true." },
+        "enabledIf":{ "$ref": "#/definitions/condition", "description": "Object visible but non-interactable until condition is true." },
+        "onInteract": { "$ref": "#/definitions/interactionEffect" }
+      }
+    },
+
+    "interactionEffect": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "What happens when the player presses E on this object. Multiple actions run in order. THIS is the 'click E -> training content' contract.",
+      "properties": {
+        "advancePhase": { "type": "string", "description": "Switch state machine to act with this id." },
+        "completePhase":{ "type": "boolean", "description": "Mark current act complete." },
+        "openQuiz":     { "type": "string", "description": "Open the quiz with this id (must be defined in some act with type='quiz')." },
+        "openBriefing": { "type": "string", "description": "Show briefing card. Value is the act id whose narration.briefing to display, or a free string." },
+        "openTerminal": { "type": "string", "description": "Open a fake terminal modal with this preset id (engine ships shell preset for tools like 'vddk-cli', 'fio', 'esxcli')." },
+        "playVideo":    { "type": "string", "description": "Play a video clip URL (e.g., a per-step explanation)." },
+        "playSound":    { "type": "string" },
+        "setVar":       { "type": "object", "description": "Mutate meta.vars at runtime, e.g. {\"scanner\": true}.", "additionalProperties": { "type": ["string", "number", "boolean"] } },
+        "spawnEnemies": { "type": "string", "description": "Spawn waves preset id." },
+        "holdSeconds":  { "type": "number", "minimum": 0, "description": "If > 0, player must HOLD E for this many seconds (used for DeployPad-style charge interactions)." },
+        "requireVar":   { "type": "object", "description": "Gate this interaction; if any key/value mismatches, the action does nothing and shows hoverPrompt only.", "additionalProperties": { "type": ["string", "number", "boolean"] } },
+        "emit":         { "type": "string", "description": "Custom EventBus event id to emit (allows scripted scenes)." }
+      }
+    },
+
+    "act": {
+      "type": "object",
+      "required": ["id", "type", "narration"],
+      "additionalProperties": false,
+      "properties": {
+        "id":       { "type": "string", "description": "Stable id, e.g. 'act3_scan'." },
+        "index":    { "type": "integer", "minimum": 1 },
+        "type": {
+          "type": "string",
+          "enum": ["deploy", "scan", "config", "quiz", "sync", "validate", "cutover", "combat", "free"],
+          "description": "Generic phase type. Engine maps each to a handler. Replaces 8 separate phases/*.ts classes."
+        },
+        "narration": {
+          "type": "object",
+          "required": ["title", "objective"],
+          "additionalProperties": false,
+          "properties": {
+            "title":    { "type": "string" },
+            "subtitle": { "type": "string" },
+            "objective":{ "type": "string", "description": "On-screen objective text." },
+            "briefing": { "type": "string", "description": "Long-form mission briefing. Spoken via TTS at act enter." },
+            "hint":     { "type": "string" },
+            "successMessage": { "type": "string" },
+            "failureMessage": { "type": "string" }
+          }
+        },
+        "sopTips": {
+          "type": "array",
+          "description": "Knowledge-point tips shown a few seconds after the act starts. Replaces TutorialPrompts ACT_SOP_TIPS hardcoded V2V/SmartX text.",
+          "items": {
+            "type": "object",
+            "required": ["title", "body"],
+            "additionalProperties": false,
+            "properties": {
+              "title":    { "type": "string" },
+              "body":     { "type": "string" },
+              "delayMs":  { "type": "integer", "minimum": 0, "default": 3500 },
+              "duration": { "type": "integer", "minimum": 500, "default": 6000 }
+            }
+          }
+        },
+        "config": {
+          "type": "object",
+          "description": "Type-specific configuration. The engine's GenericPhase reads only the fields relevant to act.type and ignores the rest.",
+          "additionalProperties": true,
+          "properties": {
+            "targets": {
+              "type": "array",
+              "description": "scan/validate: ids of interactables to be marked.",
+              "items": { "type": "string" }
+            },
+            "consoleId": {
+              "type": "string",
+              "description": "config: id of the interactable acting as the configuration console."
+            },
+            "mappings": {
+              "type": "array",
+              "description": "config (network/storage mapping): editable rows.",
+              "items": {
+                "type": "object",
+                "additionalProperties": true,
+                "properties": {
+                  "from":     { "type": "string" },
+                  "toOptions":{ "type": "array", "items": { "type": "string" } },
+                  "correct":  { "type": "string" }
+                }
+              }
+            },
+            "validators": {
+              "type": "array",
+              "description": "validate: list of validation rules; act passes when all pass.",
+              "items": { "$ref": "#/definitions/validator" }
+            },
+            "quiz": {
+              "type": "object",
+              "description": "quiz: questions inline.",
+              "additionalProperties": false,
+              "properties": {
+                "passingPct": { "type": "number", "minimum": 0, "maximum": 100, "default": 80 },
+                "questions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["id", "type", "content", "correct"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "id":      { "type": "string" },
+                      "type":    { "type": "string", "enum": ["single_choice", "multiple_choice", "true_false", "fill_blank"] },
+                      "content": { "type": "string" },
+                      "options": { "type": "array", "items": { "type": "string" } },
+                      "correct": {},
+                      "points":  { "type": "integer", "minimum": 1, "default": 10 },
+                      "explanation": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            },
+            "syncDurationSec": { "type": "number", "minimum": 1, "description": "sync: simulated sync duration." },
+            "enemyWaves": {
+              "type": "array",
+              "description": "combat / sync: waves to spawn while the act is active.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["count"],
+                "properties": {
+                  "delaySec":  { "type": "number", "default": 0 },
+                  "count":     { "type": "integer", "minimum": 1 },
+                  "template":  { "type": "string", "description": "Enemy template id, e.g. 'competitor_red' / 'dirty_data_purple'." },
+                  "label":     { "type": "string" }
+                }
+              }
+            },
+            "completeOn": {
+              "type": "string",
+              "enum": ["all_targets_marked", "console_used", "validators_pass", "quiz_pass", "sync_complete", "all_enemies_dead", "manual"],
+              "description": "Generic completion criterion."
+            }
+          }
+        },
+        "onPass": { "$ref": "#/definitions/interactionEffect", "description": "Effects triggered when the act completes successfully." },
+        "onFail": { "$ref": "#/definitions/interactionEffect", "description": "Effects triggered when the act fails (e.g., quiz < passingPct)." }
+      }
+    },
+
+    "validator": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["threshold", "regex", "equal", "external_tool"],
+          "description": "Which validator class to use."
+        },
+        "var":      { "type": "string", "description": "meta.vars / runtime var name to evaluate." },
+        "min":      { "type": "number" },
+        "max":      { "type": "number" },
+        "pattern":  { "type": "string" },
+        "expected": {},
+        "tool":     { "type": "string", "description": "external_tool: tool id, e.g. 'fio_iops_check'." },
+        "message":  { "type": "string", "description": "Human-readable failure reason." }
+      }
+    },
+
+    "condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A simple all-of condition over runtime vars / phase progression.",
+      "properties": {
+        "phaseAtLeast": { "type": "string", "description": "Act id; true once that act has been entered." },
+        "phaseEquals":  { "type": "string" },
+        "phaseCompleted": { "type": "string" },
+        "varsEqual":    { "type": "object", "additionalProperties": { "type": ["string", "number", "boolean"] } }
+      }
+    }
+  }
+}

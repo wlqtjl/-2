@@ -83,6 +83,54 @@
           // 暴露为 window.__GAME_SCENARIO__ 供引擎数据驱动渲染。
           // 若同时带 levelId，则 __GAME_LEVEL__ 的 briefing/passScore/maxScore
           // 会被场景包中 narrative/scoring 对应字段覆盖（场景包优先）。
+          // FPS Mission DSL v1：URL ?missionPack=<slug> 时从静态文件加载完整任务包
+          // (intro 视频 + 机房布局 + 各幕 + E 键交互 + 评分 + 旁白)，
+          // 暴露为 window.__GAME_MISSION__ 供引擎按数据渲染。
+          // 这是把硬编码的 V2V 内容（MissionNarrator/TutorialPrompts/phases/*）
+          // 抽到 JSON 后的注入点；不同培训主题只需替换 missionPack。
+          var missionPackId = qs.get('missionPack') || qs.get('mission_pack') || null;
+          if (missionPackId) {
+            try {
+              var mxhr2 = new XMLHttpRequest();
+              // 静态资源优先（同源），失败再退回到 /api/missions/<id>
+              mxhr2.open('GET', '/game/missions/' + encodeURIComponent(missionPackId) + '.json', false);
+              mxhr2.send(null);
+              if (mxhr2.status >= 200 && mxhr2.status < 300) {
+                window.__GAME_MISSION__ = JSON.parse(mxhr2.responseText);
+              } else {
+                var mxhr3 = new XMLHttpRequest();
+                mxhr3.open('GET', '/api/missions/' + encodeURIComponent(missionPackId), false);
+                if (jwt) mxhr3.setRequestHeader('Authorization', 'Bearer ' + jwt);
+                mxhr3.send(null);
+                if (mxhr3.status >= 200 && mxhr3.status < 300) {
+                  window.__GAME_MISSION__ = JSON.parse(mxhr3.responseText);
+                }
+              }
+              // 动态替换 <title>，让 V2V/IOPS/Security 等不同包看到的标题正确。
+              if (window.__GAME_MISSION__ &&
+                  window.__GAME_MISSION__.meta &&
+                  window.__GAME_MISSION__.meta.name) {
+                try { document.title = window.__GAME_MISSION__.meta.name; } catch (_e) {}
+              }
+              // 与历史 __GAME_LEVEL__ 协议保持兼容：把 mission 的核心字段也镜像过去，
+              // 让仅理解 __GAME_LEVEL__ 的旧 bundle 也能跑出新内容。
+              if (window.__GAME_MISSION__) {
+                window.__GAME_LEVEL__ = window.__GAME_LEVEL__ || {};
+                var m = window.__GAME_MISSION__;
+                if (m.meta && m.meta.name)        window.__GAME_LEVEL__.levelName = m.meta.name;
+                if (m.acts && m.acts[0] && m.acts[0].narration && m.acts[0].narration.briefing) {
+                  window.__GAME_LEVEL__.briefing = m.acts[0].narration.briefing;
+                }
+                if (m.scoring) {
+                  if (m.scoring.maxScore     != null) window.__GAME_LEVEL__.maxScore  = m.scoring.maxScore;
+                  if (m.scoring.passingScore != null) window.__GAME_LEVEL__.passScore = m.scoring.passingScore;
+                }
+              }
+            } catch (e) {
+              console.warn('[OMNI-SIM] missionPack fetch failed:', e);
+            }
+          }
+
           var scenarioId = qs.get('scenario') || null;
           if (scenarioId) {
             try {

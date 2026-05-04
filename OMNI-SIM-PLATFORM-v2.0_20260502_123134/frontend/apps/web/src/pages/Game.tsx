@@ -1,16 +1,20 @@
 import { useState, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Target, Trophy, Clock, Glasses, Crosshair } from 'lucide-react'
 import GameScene from '../components/GameScene'
 import { courseAPI } from '../api'
 import type { Question } from '../types'
 
-// Backend origin (FastAPI) — the V2V FPS game is mounted there at /game/.
+// Backend origin (FastAPI) — the FPS bundle is mounted there at /game/.
+// The bundle reads the active training topic from ?missionPack=<id>; the
+// platform passes this through so each Level can choose its own training
+// content without recompiling the engine.
 const BACKEND_BASE = (import.meta.env.VITE_API_URL as string) || 'http://localhost:8000'
 
 export default function Game() {
   const { levelId } = useParams<{ levelId: string }>()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [questions, setQuestions] = useState<Question[]>([])
   const [currentIndex, setCurrentIndex] = useState(0)
   const [score, setScore] = useState(0)
@@ -20,13 +24,21 @@ export default function Game() {
   const [showFeedback, setShowFeedback] = useState(false)
   const [isCorrect, setIsCorrect] = useState(false)
   const [enableVR, setEnableVR] = useState(false)
-  // 默认走 FPS 通关体验：每个关卡都以 V2V 战役为主入口；
-  // 用户可以切到“题目模式”做传统答题。
+  // 默认走 FPS 通关体验：关卡通过 missionPack 决定具体培训主题（V2V / IOPS / ...）；
+  // 用户可以切到"题目模式"做传统答题。
   const [enableFPS, setEnableFPS] = useState(true)
   const [fpsResult, setFpsResult] = useState<null | { passed: boolean; score: number; attemptId?: number }>(null)
+  // Mission pack id resolved from (1) ?missionPack= URL override (preview/QA),
+  // (2) GET /api/migration/levels/{id}/mission → missionPack (Level.config-driven),
+  // (3) implicit default on the backend (smartx-v2v-fps-v1).
+  const [missionPack, setMissionPack] = useState<string | null>(
+    () => searchParams.get('missionPack') || null,
+  )
 
   useEffect(() => {
     fetchQuestions()
+    fetchMissionPack()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [levelId])
 
   // 监听游戏 iframe 的通关消息：写入 LevelAttempt 后展示结算。
@@ -62,6 +74,23 @@ export default function Game() {
       setQuestions(data)
     } catch (err) {
       console.error('Failed to fetch questions:', err)
+    }
+  }
+
+  // Resolve which FPS Mission DSL pack this level should run. Backend
+  // resolves Level.config.mission_pack and falls back to the default V2V pack.
+  const fetchMissionPack = async () => {
+    if (searchParams.get('missionPack')) return // explicit URL override wins
+    if (!levelId) return
+    try {
+      const resp = await fetch(`${BACKEND_BASE}/api/migration/levels/${encodeURIComponent(levelId)}/mission`)
+      if (!resp.ok) return
+      const data = await resp.json()
+      if (data && typeof data.missionPack === 'string') {
+        setMissionPack(data.missionPack)
+      }
+    } catch (err) {
+      console.warn('Failed to resolve mission pack for level:', err)
     }
   }
 
@@ -121,7 +150,7 @@ export default function Game() {
                   ? 'bg-emerald-600 text-white'
                   : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
               }`}
-              title="启动 V2V 迁移 FPS 战役"
+              title="启动 FPS 培训战役（按关卡 mission pack 选择主题）"
             >
               <Crosshair className="w-5 h-5" />
               {enableFPS ? 'FPS已启用' : 'FPS战役'}
@@ -175,10 +204,12 @@ export default function Game() {
             </div>
           ) : (
             <iframe
-              title="V2V Migration FPS"
+              title="OMNI-SIM FPS Training"
               src={`${BACKEND_BASE}/game/index.html?token=${encodeURIComponent(
                 localStorage.getItem('token') || '',
-              )}&levelId=${encodeURIComponent(levelId || '')}`}
+              )}&levelId=${encodeURIComponent(levelId || '')}${
+                missionPack ? `&missionPack=${encodeURIComponent(missionPack)}` : ''
+              }`}
               className="w-full h-full border-0"
               allow="fullscreen; gamepad; xr-spatial-tracking"
             />

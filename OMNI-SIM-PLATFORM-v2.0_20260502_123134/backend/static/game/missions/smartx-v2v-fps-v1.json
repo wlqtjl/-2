@@ -1,0 +1,493 @@
+{
+  "$schema": "../_schema/fps-mission-v1.schema.json",
+  "dslVersion": "1.0",
+  "id": "smartx-v2v-fps-v1",
+
+  "meta": {
+    "name": "数据中心攻坚战 · SmartX V2V 迁移",
+    "subtitle": "DATACENTER ASSAULT · SMARTX V2V FPS",
+    "domain": "v2v-migration",
+    "version": "1.0.0",
+    "language": "zh-CN",
+    "vars": {
+      "vmId": "vm-prod-db-01",
+      "vmName": "生产数据库主节点",
+      "dataTotalGB": 250,
+      "scannerEquipped": false,
+      "deployComplete": false,
+      "vcenterConnected": false
+    }
+  },
+
+  "intro": {
+    "videoUrl": "/game/intro.mp4",
+    "durationSec": 40,
+    "skippable": true,
+    "subtitles": []
+  },
+
+  "scene": {
+    "preset": "datacenter_medium",
+    "ambient": {
+      "skyColor":       "#0A0E1A",
+      "fogDensity":     0.025,
+      "rackLightColor": "#00AAFF"
+    },
+    "spawn": { "position": [0, 1.6, 6], "yaw": 0 },
+
+    "characters": [
+      { "role": "player",                "modelUrl": "/game/Soldier.glb",                  "scale": 1.0, "label": "运维工程师" },
+      { "role": "npc_enemy_template",    "modelUrl": "/game/assets/characters/swat.glb",   "scale": 1.0, "label": "竞品突击队（红 / 紫）" }
+    ],
+
+    "weapons": [
+      { "slot": 1, "id": "rifle",   "name": "突击步枪", "kind": "assault", "modelUrl": "/game/assets/weapons/smg.glb" },
+      { "slot": 4, "id": "scanner", "name": "扫描枪",   "kind": "scanner", "modelUrl": "/game/assets/weapons/smg.glb" }
+    ],
+
+    "interactables": [
+      {
+        "id":          "deploy_pad",
+        "type":        "deploy_pad",
+        "position":    [0, 0, -2],
+        "color":       "#00E676",
+        "label":       "SMTX 工具部署台",
+        "hoverPrompt": "按住 F 部署 SMTX 迁移工具（3 秒）",
+        "onInteract":  {
+          "holdSeconds":   3,
+          "completePhase": true,
+          "setVar":        { "deployComplete": true },
+          "playSound":     "objective_complete",
+          "advancePhase":  "act2_vcenter"
+        }
+      },
+      {
+        "id":          "console_vcenter",
+        "type":        "console",
+        "position":    [3.5, 0, -2],
+        "color":       "#00E676",
+        "label":       "vCenter 控制台",
+        "hoverPrompt": "按 E 输入 vCenter 凭据并扫描 ESXi",
+        "visibleIf":   { "varsEqual": { "deployComplete": true } },
+        "onInteract":  {
+          "advancePhase": "act3_scan",
+          "openTerminal": "vddk-cli",
+          "setVar":       { "vcenterConnected": true, "scannerEquipped": true },
+          "playSound":    "console_beep"
+        }
+      },
+      {
+        "id":          "hologram_vm_01",
+        "type":        "hologram",
+        "position":    [-3, 1, -4],
+        "color":       "#00E676",
+        "label":       "{{vmName}}",
+        "hoverPrompt": "用扫描枪标记此 VM"
+      },
+      {
+        "id":          "hologram_vm_02",
+        "type":        "hologram",
+        "position":    [3, 1, -6],
+        "color":       "#00E676",
+        "label":       "Web 中间件 VM"
+      },
+      {
+        "id":          "hologram_vm_03",
+        "type":        "hologram",
+        "position":    [0, 1, -8],
+        "color":       "#00E676",
+        "label":       "归档 VM"
+      },
+      {
+        "id":          "console_network",
+        "type":        "console",
+        "position":    [-8, 0, -3],
+        "color":       "#3FA7FF",
+        "label":       "网络间 · vSwitch → Bridge",
+        "hoverPrompt": "按 E 配置网络映射",
+        "visibleIf":   { "phaseCompleted": "act3_scan" },
+        "onInteract":  { "advancePhase": "act4_network" }
+      },
+      {
+        "id":          "console_storage",
+        "type":        "console",
+        "position":    [8, 0, -3],
+        "color":       "#FF8C42",
+        "label":       "存储间 · Datastore → Pool",
+        "hoverPrompt": "按 E 配置存储池映射",
+        "visibleIf":   { "phaseCompleted": "act4_network" },
+        "onInteract":  { "advancePhase": "act5_storage" }
+      },
+      {
+        "id":          "console_cutover",
+        "type":        "console",
+        "position":    [0, 0, 2],
+        "color":       "#FF3344",
+        "label":       "切换控制台",
+        "hoverPrompt": "按 E 启动全量同步 / 切换",
+        "visibleIf":   { "phaseCompleted": "act5_storage" },
+        "onInteract":  { "advancePhase": "act6_full_sync" }
+      }
+    ]
+  },
+
+  "acts": [
+    {
+      "id":    "act1_deploy",
+      "index": 1,
+      "type":  "deploy",
+      "narration": {
+        "title":     "部署 SMTX 迁移工具",
+        "subtitle":  "DEPLOY · SMTX MIGRATION TOOL",
+        "objective": "前往指挥台东侧的 [绿色部署台]，按住 F 键部署 3 秒。期间清理涌来的 Bug。",
+        "briefing":  "SMTX 迁移工具基于无代理、快照与数据复制技术。无需在虚拟机内安装任何软件，即可完成 VMware 到 SmartX 的跨平台迁移。",
+        "hint":      "按住 F 部署，松开会中断"
+      },
+      "config": {
+        "completeOn": "manual"
+      }
+    },
+    {
+      "id":    "act2_vcenter",
+      "index": 2,
+      "type":  "config",
+      "narration": {
+        "title":     "连接 vCenter 源端",
+        "subtitle":  "CONNECT · VMWARE SOURCE",
+        "objective": "回到指挥台 [绿色 vCenter 控制台] 前，按 E 输入凭据并扫描 ESXi 环境。",
+        "briefing":  "SMTX 工具调用 VMware VDDK 接口连接 vCenter，需要具备快照与磁盘读取权限的账号。扫描将枚举 ESXi 主机、数据存储、虚拟网络与 VM 元数据。",
+        "hint":      "走到绿色控制台前按 E"
+      },
+      "sopTips": [
+        {
+          "title":   "SOP · 连接 vCenter",
+          "body":    "账号需具备「快照 + 磁盘读取」权限，否则 VDDK 接口握手失败。建议使用专用迁移账号，避免与运维账号混用。",
+          "delayMs": 3500,
+          "duration": 6000
+        }
+      ],
+      "config": {
+        "consoleId":  "console_vcenter",
+        "completeOn": "console_used"
+      }
+    },
+    {
+      "id":    "act3_scan",
+      "index": 3,
+      "type":  "scan",
+      "narration": {
+        "title":     "评估并标记待迁移 VM",
+        "subtitle":  "MARK · VDDK SNAPSHOTABLE TARGETS",
+        "objective": "切换到 [扫描枪 · 数字 4]，用激光标记场景中所有绿色 VM 全息影像。",
+        "briefing":  "兼容性评估阶段：检查 GuestOS、磁盘格式与快照状态。未合并的快照会提示告警但不阻塞迁移。",
+        "hint":      "按 4 切换扫描枪 · 左键标记"
+      },
+      "sopTips": [
+        {
+          "title": "SOP · 兼容性评估",
+          "body":  "扫描结果会列出 GuestOS / 磁盘格式 / 快照状态。未合并快照只是 WARN，不阻塞迁移；UEFI / 虚拟硬件 v17 才是 ERROR。",
+          "duration": 6500
+        }
+      ],
+      "config": {
+        "targets":    ["hologram_vm_01", "hologram_vm_02", "hologram_vm_03"],
+        "completeOn": "all_targets_marked"
+      }
+    },
+    {
+      "id":    "act4_network",
+      "index": 4,
+      "type":  "config",
+      "narration": {
+        "title":     "配置网络映射",
+        "subtitle":  "NETWORK · vSwitch → Bridge",
+        "objective": "穿过左侧走廊进入 [网络间]，按 E 与蓝色控制台交互，完成 vSwitch → SmartX Bridge 映射。",
+        "briefing":  "将源端的 vSwitch 和分布式端口组映射到 SmartX 的 Bridge / 分布式交换机。保留 VLAN 与 MTU，以避免切换后网络中断。",
+        "hint":      "左走廊 → 蓝色控制台"
+      },
+      "sopTips": [
+        {
+          "title": "SOP · 网络映射",
+          "body":  "保留源端 VLAN 与 MTU。分布式端口组建议 1:1 映射到 SmartX 分布式交换机；切勿把生产 VLAN 误映到管理网。",
+          "duration": 6500
+        }
+      ],
+      "config": {
+        "consoleId": "console_network",
+        "mappings": [
+          { "from": "vSwitch0 (生产)",   "toOptions": ["br-prod", "br-mgmt", "br-storage"], "correct": "br-prod" },
+          { "from": "vSwitch1 (管理)",   "toOptions": ["br-prod", "br-mgmt", "br-storage"], "correct": "br-mgmt" },
+          { "from": "vSwitch2 (存储)",   "toOptions": ["br-prod", "br-mgmt", "br-storage"], "correct": "br-storage" }
+        ],
+        "completeOn": "validators_pass",
+        "validators": [
+          { "kind": "equal", "var": "act4_network.errors", "expected": 0, "message": "存在错误的网络映射，请检查 VLAN 与 MTU。" }
+        ]
+      }
+    },
+    {
+      "id":    "act5_storage",
+      "index": 5,
+      "type":  "config",
+      "narration": {
+        "title":     "配置存储池映射",
+        "subtitle":  "STORAGE · Datastore → Pool",
+        "objective": "穿过右侧走廊进入 [存储间]，按 E 与橙色控制台交互，为 VM 选择存储池并开启 I/O Locality。",
+        "briefing":  "根据 VM 工作负载（数据库 / Web / 归档）选择 NVMe / SSD / HDD 池。数据库类建议开启 I/O Locality 与 RDMA 以获得最低延迟。",
+        "hint":      "右走廊 → 橙色控制台"
+      },
+      "sopTips": [
+        {
+          "title": "SOP · 存储池映射",
+          "body":  "数据库 / 高 IOPS → NVMe + I/O Locality｜Web/中间件 → SSD｜归档/冷数据 → HDD。错配会触发存储告警面板。",
+          "duration": 6500
+        }
+      ],
+      "config": {
+        "consoleId": "console_storage",
+        "mappings": [
+          { "from": "{{vmName}} (DB)",   "toOptions": ["pool-nvme", "pool-ssd", "pool-hdd"], "correct": "pool-nvme" },
+          { "from": "Web 中间件 VM",     "toOptions": ["pool-nvme", "pool-ssd", "pool-hdd"], "correct": "pool-ssd" },
+          { "from": "归档 VM",           "toOptions": ["pool-nvme", "pool-ssd", "pool-hdd"], "correct": "pool-hdd" }
+        ],
+        "completeOn": "validators_pass",
+        "validators": [
+          { "kind": "equal", "var": "act5_storage.errors", "expected": 0, "message": "存在错配的存储池，数据库未放在 NVMe 池上会触发存储告警。" }
+        ]
+      }
+    },
+    {
+      "id":    "act6_full_sync",
+      "index": 6,
+      "type":  "sync",
+      "narration": {
+        "title":     "全量迁移 · 击退竞品突击队",
+        "subtitle":  "FULL SYNC · REPEL COMPETITORS",
+        "objective": "回到指挥台红色 [切换控制台] 按 E 启动全量同步。同时击退涌入的深信服 / 华为 / 华三突击队，他们也想抢走这些 VMware 虚拟机！",
+        "briefing":  "业务在线状态下通过 VDDK 完成磁盘的首次全量复制。利用快照技术保障数据一致性。警告：竞品厂商也盯上了这批 VM，必须全部击毙才能保证 SmartX 的迁移通道不被干扰。",
+        "hint":      "击毙所有突击队员 · 保持同步到 100%"
+      },
+      "sopTips": [
+        {
+          "title": "SOP · 全量同步",
+          "body":  "业务在线下进行首次磁盘复制。期间清场所有竞品突击队，否则同步在 90% 处冻结。CBT 自动开启，无需手动配置。",
+          "duration": 7000
+        }
+      ],
+      "config": {
+        "syncDurationSec": 60,
+        "enemyWaves": [
+          { "delaySec": 0,  "count": 4, "template": "competitor_red",   "label": "深信服 / 华为 / 华三 突击队" },
+          { "delaySec": 25, "count": 4, "template": "competitor_red" }
+        ],
+        "completeOn": "sync_complete"
+      }
+    },
+    {
+      "id":    "act7_incremental",
+      "index": 7,
+      "type":  "combat",
+      "narration": {
+        "title":     "增量同步 · 清理脏数据（浪潮 / ZStack）",
+        "subtitle":  "DELTA · CLEAN DIRTY BLOCKS",
+        "objective": "全量完成后，快照定期生成差异数据。打掉所有紫色突击手（浪潮 / ZStack 小队）完成本轮增量同步。",
+        "briefing":  "SMTX 定期通过快照获取差异数据并复制到 SmartX。每一轮增量同步都会缩小最后切换时的停机窗口。紫色小队代表「脏数据块」，优先清除。",
+        "hint":      "优先清除紫色头套敌人"
+      },
+      "sopTips": [
+        {
+          "title": "SOP · 增量同步",
+          "body":  "快照差异每轮缩小停机窗口。紫色「脏数据块」敌人优先清除：每轮残留越多，最终切换停机时间越长。",
+          "duration": 7000
+        }
+      ],
+      "config": {
+        "enemyWaves": [
+          { "delaySec": 0,  "count": 5, "template": "dirty_data_purple", "label": "浪潮 / ZStack 小队 (脏数据块)" },
+          { "delaySec": 15, "count": 5, "template": "dirty_data_purple" }
+        ],
+        "completeOn": "all_enemies_dead"
+      }
+    },
+    {
+      "id":    "act8_cutover",
+      "index": 8,
+      "type":  "quiz",
+      "narration": {
+        "title":     "业务切换 · 迁移知识考核",
+        "subtitle":  "CUTOVER · FINAL EXAM",
+        "objective": "所有敌人已清除。回到切换控制台按 E，先通过「迁移知识考核」（80% 以上），再执行最后一轮增量 + 关机切换。",
+        "briefing":  "在真正停机切换前，系统要求操作员完成一次实战考核：VDDK、CBT、基线快照、VirtIO 注入、最终切换顺序。考核通过后才会开始最后一轮增量与关机切换。",
+        "hint":      "按 E 进入考核 → 答对 80% 以上解锁切换"
+      },
+      "sopTips": [
+        {
+          "title": "SOP · 业务切换",
+          "body":  "考核 ≥80% 才能解锁切换。切换顺序：①最后一轮增量 ②源端关机 ③驱动注入(VirtIO) ④目标端开机 ⑤业务自检。",
+          "duration": 7500
+        }
+      ],
+      "config": {
+        "completeOn": "quiz_pass",
+        "quiz": {
+          "passingPct": 80,
+          "questions": [
+            {
+              "id": "q_vddk",
+              "type": "single_choice",
+              "content": "SMTX 通过哪个 VMware 接口读取源端虚拟机磁盘？",
+              "options": ["VDDK", "vSphere Web Service", "ESXi SSH", "NFS"],
+              "correct": "VDDK",
+              "points": 20,
+              "explanation": "VDDK (Virtual Disk Development Kit) 是 VMware 官方提供的磁盘 IO SDK。"
+            },
+            {
+              "id": "q_cbt",
+              "type": "true_false",
+              "content": "CBT (Changed Block Tracking) 必须由运维手动开启，否则增量同步无法进行。",
+              "correct": false,
+              "points": 20,
+              "explanation": "SMTX 在首次全量时会自动启用 CBT，无需手动配置。"
+            },
+            {
+              "id": "q_cutover_order",
+              "type": "single_choice",
+              "content": "正确的最终切换顺序是？",
+              "options": [
+                "源端关机 → 最后一轮增量 → VirtIO 注入 → 目标端开机 → 业务自检",
+                "最后一轮增量 → 源端关机 → VirtIO 注入 → 目标端开机 → 业务自检",
+                "VirtIO 注入 → 最后一轮增量 → 源端关机 → 目标端开机 → 业务自检",
+                "源端关机 → VirtIO 注入 → 最后一轮增量 → 目标端开机 → 业务自检"
+              ],
+              "correct": "最后一轮增量 → 源端关机 → VirtIO 注入 → 目标端开机 → 业务自检",
+              "points": 30
+            },
+            {
+              "id": "q_virtio",
+              "type": "single_choice",
+              "content": "VirtIO 驱动注入的目的是？",
+              "options": [
+                "让目标 VM 能识别 SmartX 的半虚拟化磁盘 / 网卡",
+                "提升源端读写性能",
+                "压缩传输数据",
+                "加密磁盘内容"
+              ],
+              "correct": "让目标 VM 能识别 SmartX 的半虚拟化磁盘 / 网卡",
+              "points": 30,
+              "explanation": "若不注入 VirtIO，Windows / 老旧 Linux 在 SmartX 上将无法引导。"
+            }
+          ]
+        }
+      },
+      "onPass": { "advancePhase": "act9_done" },
+      "onFail": { "openBriefing": "考核未通过 80%，请复习 SOP 后重试。" }
+    },
+    {
+      "id":    "act9_done",
+      "index": 9,
+      "type":  "validate",
+      "narration": {
+        "title":     "迁移完成",
+        "subtitle":  "MISSION COMPLETE",
+        "objective": "虚拟机已成功迁移至 SmartX ELF 集群，VMDK 已转换为 ELF 卷。",
+        "briefing":  "迁移完成：磁盘格式已由 VMDK 转换为 SmartX ELF 原生卷，VirtIO 驱动注入完成，业务验证通过。",
+        "hint":      "查看结算得分"
+      },
+      "config": {
+        "validators": [
+          { "kind": "equal", "var": "deployComplete",    "expected": true, "message": "SMTX 工具未部署" },
+          { "kind": "equal", "var": "vcenterConnected",  "expected": true, "message": "vCenter 未连接" }
+        ],
+        "completeOn": "validators_pass"
+      }
+    }
+  ],
+
+  "scoring": {
+    "maxScore":     1000,
+    "passingScore": 600,
+    "rules": [
+      { "event": "act:complete",  "delta": 100 },
+      { "event": "enemy:killed",  "delta": 10,  "max": 200 },
+      { "event": "quiz:correct",  "delta": 20 },
+      { "event": "player:died",   "delta": -50 },
+      { "event": "target:marked", "delta": 15,  "max": 60 }
+    ]
+  },
+
+  "tutorialTips": [
+    {
+      "trigger": "boot_basic",
+      "title":   "基础控制",
+      "body":    "WASD 移动｜Shift 冲刺｜空格跳跃｜鼠标右键瞄准｜1~6 切换工具｜Q 投手雷｜E 交互。",
+      "duration": 6500
+    },
+    {
+      "trigger": "weapon:fire",
+      "title":   "继续压制",
+      "body":    "R 键换弹｜空仓换弹更慢，留意弹药数。鼠标右键可瞄准（部分武器）。",
+      "duration": 4500
+    },
+    {
+      "trigger": "weapon:reload_start",
+      "title":   "战术换弹",
+      "body":    "弹匣未空时换弹更快｜空仓换弹会多 +0.4s 拉栓。",
+      "duration": 4000
+    },
+    {
+      "trigger": "tool:switch",
+      "title":   "工具切换",
+      "body":    "1=突击步枪｜2=霰弹｜3=狙击｜4=扫描枪｜5=平板｜6=网线钳。Q 投手雷。",
+      "duration": 5500
+    },
+    {
+      "trigger": "grenade:thrown",
+      "title":   "注意爆炸范围",
+      "body":    "手雷落地最后 1 秒会显示红色危险圈，玩家在范围内会被自伤并触发屏幕震屏。",
+      "duration": 4500
+    },
+    {
+      "trigger": "pickup:health",
+      "title":   "医疗包",
+      "body":    "走过即拾取｜恢复生命值，死亡后会先抵扣护甲再回 HP。",
+      "duration": 4000
+    },
+    {
+      "trigger": "pickup:armor",
+      "title":   "护甲补给",
+      "body":    "蓝条护甲先于生命值受伤，吸收 60% 伤害，建议优先拾取。",
+      "duration": 4500
+    },
+    {
+      "trigger": "pickup:ammo",
+      "title":   "弹药补给",
+      "body":    "当前武器 +60% 主弹药，其它武器各 +20%。",
+      "duration": 4000
+    },
+    {
+      "trigger": "pickup:grenade",
+      "title":   "手雷补给",
+      "body":    "手雷库存 +1（上限 3）。Q 键投掷。",
+      "duration": 4000
+    },
+    {
+      "trigger": "player:died",
+      "title":   "复活机制",
+      "body":    "本作含复活：按 SPACE 在原地复活并恢复满血，但护甲清零、得分有折扣。",
+      "duration": 5500
+    },
+    {
+      "trigger": "bug:killed",
+      "title":   "击杀确认",
+      "body":    "十字准星会闪 X 标记｜爆头伤害 ×2.5，命中头部时 X 变红。",
+      "duration": 5000,
+      "once":    true
+    }
+  ],
+
+  "audio": {
+    "missionTitleSfx":      "mission_title",
+    "objectiveCompleteSfx": "objective_complete",
+    "alertSfx":             "alert"
+  }
+}

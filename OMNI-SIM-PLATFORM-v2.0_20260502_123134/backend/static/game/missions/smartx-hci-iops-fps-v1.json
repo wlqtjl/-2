@@ -1,0 +1,290 @@
+{
+  "$schema": "../_schema/fps-mission-v1.schema.json",
+  "dslVersion": "1.0",
+  "id": "smartx-hci-iops-fps-v1",
+
+  "meta": {
+    "name": "HCI 性能调优实战 · NVMe IOPS 攻坚",
+    "subtitle": "HCI TUNING · NVMe IOPS BATTLE",
+    "domain": "hci-iops",
+    "version": "1.0.0",
+    "language": "zh-CN",
+    "vars": {
+      "clusterId":     "cluster-prod-01",
+      "vmName":        "OLTP 生产数据库",
+      "targetIops":    100000,
+      "currentIops":   0,
+      "fioBaselineDone": false,
+      "ioLocalityOn":  false
+    }
+  },
+
+  "intro": {
+    "videoUrl": "/game/intro.mp4",
+    "durationSec": 40,
+    "skippable": true,
+    "subtitles": [
+      { "from": 0,  "to": 6,  "text": "SmartX HCI 集群 · 生产 OLTP 节点" },
+      { "from": 6,  "to": 14, "text": "数据库 IOPS 跌至 38k，业务延迟告警" },
+      { "from": 14, "to": 24, "text": "你需要：基线测试 → 定位瓶颈 → 调优 → 复测达标" },
+      { "from": 24, "to": 36, "text": "目标：稳定 ≥ 100k IOPS，p99 < 2ms" }
+    ]
+  },
+
+  "scene": {
+    "preset": "datacenter_small",
+    "ambient": {
+      "skyColor":       "#080F1A",
+      "fogDensity":     0.018,
+      "rackLightColor": "#FF8800"
+    },
+    "spawn": { "position": [0, 1.6, 5], "yaw": 0 },
+
+    "characters": [
+      { "role": "player", "modelUrl": "/game/Soldier.glb", "scale": 1.0, "label": "性能工程师" }
+    ],
+
+    "weapons": [
+      { "slot": 5, "id": "tablet", "name": "iSCSI 平板", "kind": "tablet",  "modelUrl": "/game/assets/weapons/smg.glb" },
+      { "slot": 4, "id": "scanner","name": "性能扫描枪","kind": "scanner", "modelUrl": "/game/assets/weapons/smg.glb" }
+    ],
+
+    "interactables": [
+      {
+        "id":          "console_fio",
+        "type":        "console",
+        "position":    [0, 0, -2],
+        "color":       "#FF8800",
+        "label":       "fio 基线控制台",
+        "hoverPrompt": "按 E 打开 fio 控制台，跑基线测试",
+        "onInteract":  {
+          "advancePhase": "act1_baseline",
+          "openTerminal": "fio",
+          "setVar":       { "fioBaselineDone": true, "currentIops": 38000 },
+          "playSound":    "console_beep"
+        }
+      },
+      {
+        "id":          "rack_nvme_a",
+        "type":        "server_rack",
+        "position":    [-4, 0, -4],
+        "color":       "#FF8800",
+        "label":       "NVMe Rack-A",
+        "hoverPrompt": "按 E 检查 NVMe 队列深度 / 温度",
+        "visibleIf":   { "varsEqual": { "fioBaselineDone": true } },
+        "onInteract":  { "openTerminal": "esxcli", "playSound": "console_beep" }
+      },
+      {
+        "id":          "rack_nvme_b",
+        "type":        "server_rack",
+        "position":    [4, 0, -4],
+        "color":       "#FF8800",
+        "label":       "NVMe Rack-B",
+        "hoverPrompt": "按 E 检查 NVMe 队列深度 / 温度",
+        "visibleIf":   { "varsEqual": { "fioBaselineDone": true } },
+        "onInteract":  { "openTerminal": "esxcli" }
+      },
+      {
+        "id":          "console_locality",
+        "type":        "console",
+        "position":    [0, 0, -6],
+        "color":       "#3FA7FF",
+        "label":       "I/O Locality 控制台",
+        "hoverPrompt": "按 E 启用 I/O Locality + RDMA",
+        "visibleIf":   { "phaseCompleted": "act2_diagnose" },
+        "onInteract":  {
+          "advancePhase": "act3_tune",
+          "setVar":       { "ioLocalityOn": true, "currentIops": 112000 },
+          "playSound":    "objective_complete"
+        }
+      },
+      {
+        "id":          "console_validate",
+        "type":        "console",
+        "position":    [0, 0, 2],
+        "color":       "#00E676",
+        "label":       "复测控制台",
+        "hoverPrompt": "按 E 重跑 fio 验证 IOPS 达标",
+        "visibleIf":   { "phaseCompleted": "act3_tune" },
+        "onInteract":  { "advancePhase": "act4_validate" }
+      }
+    ]
+  },
+
+  "acts": [
+    {
+      "id":    "act1_baseline",
+      "index": 1,
+      "type":  "config",
+      "narration": {
+        "title":     "基线测试 · 跑 fio",
+        "subtitle":  "BASELINE · fio 4k randread",
+        "objective": "走到橙色 fio 控制台前按 E，跑一轮 4k 随机读 60s 基线，记录当前 IOPS。",
+        "briefing":  "在调优前必须有可复现的基线。fio 用 numjobs=8、iodepth=32、bs=4k、rw=randread 跑 60s，关注 IOPS 与 p99 延迟。",
+        "hint":      "走到 fio 控制台前按 E"
+      },
+      "sopTips": [
+        {
+          "title": "SOP · 基线参数",
+          "body":  "OLTP 类负载用 4k 随机读 / 70:30 混合负载｜iodepth ≥ 32｜numjobs ≥ vCPU 数；不要在生产高峰期跑基线。",
+          "duration": 6500
+        }
+      ],
+      "config": {
+        "consoleId":  "console_fio",
+        "completeOn": "console_used"
+      }
+    },
+    {
+      "id":    "act2_diagnose",
+      "index": 2,
+      "type":  "scan",
+      "narration": {
+        "title":     "定位瓶颈 · 扫描 NVMe 机柜",
+        "subtitle":  "DIAGNOSE · NVMe RACK SCAN",
+        "objective": "切到 [扫描枪 · 数字 4]，扫描两个 NVMe 机柜，定位高温 / 高 await 节点。",
+        "briefing":  "IOPS 38k 远低于硬件上限，常见瓶颈：① iodepth 不足 ② I/O Locality 关闭导致跨节点流量 ③ NVMe 队列拥堵 / 温度降频。",
+        "hint":      "按 4 切换扫描枪 · 左键标记机柜"
+      },
+      "sopTips": [
+        {
+          "title": "SOP · 瓶颈定位",
+          "body":  "先看 await 与 svctm 比值；await ≫ svctm 说明排队严重。再看 nvme smart-log 的 critical_warning / temperature。",
+          "duration": 6500
+        }
+      ],
+      "config": {
+        "targets":    ["rack_nvme_a", "rack_nvme_b"],
+        "completeOn": "all_targets_marked"
+      }
+    },
+    {
+      "id":    "act3_tune",
+      "index": 3,
+      "type":  "config",
+      "narration": {
+        "title":     "调优 · 启用 I/O Locality + RDMA",
+        "subtitle":  "TUNE · I/O LOCALITY + RDMA",
+        "objective": "前往 [蓝色 I/O Locality 控制台] 按 E，对该 VM 启用 I/O Locality 并切换到 RDMA。",
+        "briefing":  "I/O Locality 让 VM 的读 IO 优先落到本地副本，避免跨节点网络回旋。配合 RDMA 可把队列延迟从 ~100us 压到 ~20us。",
+        "hint":      "蓝色控制台按 E"
+      },
+      "sopTips": [
+        {
+          "title": "SOP · I/O Locality 注意事项",
+          "body":  "Locality 仅对读生效；写仍需复制到副本。打开后需要一次本地副本重建（数据量大时分批进行）。",
+          "duration": 6500
+        }
+      ],
+      "config": {
+        "consoleId":  "console_locality",
+        "completeOn": "console_used"
+      }
+    },
+    {
+      "id":    "act4_validate",
+      "index": 4,
+      "type":  "validate",
+      "narration": {
+        "title":     "复测 · 验证 IOPS 达标",
+        "subtitle":  "VERIFY · IOPS ≥ TARGET",
+        "objective": "回到 [复测控制台] 按 E 重跑 fio。要求：IOPS ≥ 100,000 且 p99 < 2ms。",
+        "briefing":  "调优生效后必须再跑一轮相同参数的 fio 才算真正交付：避免「主观提升」。",
+        "hint":      "复测控制台按 E",
+        "successMessage": "性能调优交付完成，IOPS {{currentIops}}，达标。",
+        "failureMessage": "IOPS 仍低于目标，请回到 act3 检查 Locality 是否生效或 NVMe 是否降频。"
+      },
+      "config": {
+        "completeOn": "validators_pass",
+        "validators": [
+          { "kind": "equal",     "var": "ioLocalityOn", "expected": true, "message": "I/O Locality 未启用" },
+          { "kind": "threshold", "var": "currentIops",  "min": 100000,    "message": "IOPS 未达 100k 目标" }
+        ]
+      }
+    },
+    {
+      "id":    "act5_quiz",
+      "index": 5,
+      "type":  "quiz",
+      "narration": {
+        "title":     "知识考核 · HCI 性能",
+        "subtitle":  "FINAL EXAM · HCI PERFORMANCE",
+        "objective": "完成调优后通过 80% 考核，关卡通关。",
+        "briefing":  "考核内容：fio 参数、I/O Locality、RDMA、NVMe SMART。"
+      },
+      "config": {
+        "completeOn": "quiz_pass",
+        "quiz": {
+          "passingPct": 80,
+          "questions": [
+            {
+              "id": "q_iodepth",
+              "type": "single_choice",
+              "content": "OLTP 4k 随机读基线，iodepth 设多少最合理？",
+              "options": ["1", "8", "32", "256"],
+              "correct": "32",
+              "points": 25,
+              "explanation": "iodepth 32 对 NVMe 较合适；过低吃不满队列，过高徒增延迟。"
+            },
+            {
+              "id": "q_locality",
+              "type": "true_false",
+              "content": "I/O Locality 同时加速读和写。",
+              "correct": false,
+              "points": 25,
+              "explanation": "Locality 主要加速读；写仍需把副本同步到其它节点。"
+            },
+            {
+              "id": "q_rdma",
+              "type": "single_choice",
+              "content": "RDMA 主要降低的是？",
+              "options": ["磁盘容量占用", "CPU 中断 / 队列延迟", "网络带宽消耗", "电力消耗"],
+              "correct": "CPU 中断 / 队列延迟",
+              "points": 25
+            },
+            {
+              "id": "q_smart",
+              "type": "single_choice",
+              "content": "NVMe SMART 中哪个字段最直接反映「温度降频」？",
+              "options": ["critical_warning", "temperature", "media_errors", "host_read_cmds"],
+              "correct": "temperature",
+              "points": 25
+            }
+          ]
+        }
+      },
+      "onPass": { "completePhase": true }
+    }
+  ],
+
+  "scoring": {
+    "maxScore":     800,
+    "passingScore": 480,
+    "rules": [
+      { "event": "act:complete", "delta": 120 },
+      { "event": "quiz:correct", "delta": 25 },
+      { "event": "target:marked","delta": 30, "max": 60 }
+    ]
+  },
+
+  "tutorialTips": [
+    {
+      "trigger": "boot_basic",
+      "title":   "基础控制",
+      "body":    "WASD 移动｜Shift 冲刺｜鼠标右键瞄准｜4 切换扫描枪｜5 切换平板｜E 交互（打开控制台 / 跑工具）。",
+      "duration": 6500
+    },
+    {
+      "trigger": "tool:switch",
+      "title":   "工具切换",
+      "body":    "本关用到：4=扫描枪（标定瓶颈机柜）｜5=iSCSI 平板（查看实时 IOPS）。",
+      "duration": 5500
+    }
+  ],
+
+  "audio": {
+    "missionTitleSfx":      "mission_title",
+    "objectiveCompleteSfx": "objective_complete",
+    "alertSfx":             "alert"
+  }
+}

@@ -285,6 +285,35 @@ def fetch_leaderboard(limit: int = 10):
 
 
 def _default_mission_for(level: Level) -> dict:
+    """Build the legacy ``__GAME_LEVEL__`` payload for a platform level.
+
+    Historically this was hardcoded to V2V (vmId/vmName/dataTotalGB). It now
+    pulls those defaults from a mission-pack JSON when one is referenced by
+    ``Level.config['mission_pack']`` or ``Level.config['fps_mission']['missionPack']``.
+    Pure V2V wording lives in ``backend/static/game/missions/smartx-v2v-fps-v1.json``
+    so non-V2V training topics (HCI IOPS, security, ...) can ship without code edits.
+    """
+    pack = _resolve_mission_pack_for(level)
+    if pack:
+        meta = pack.get("meta") or {}
+        vars_ = meta.get("vars") or {}
+        scoring = pack.get("scoring") or {}
+        acts = pack.get("acts") or []
+        first_briefing = (
+            (acts[0].get("narration", {}).get("briefing") if acts else None)
+            or level.description
+            or f"完成《{level.name}》战役以通关本关卡。"
+        )
+        return {
+            "vmId":        str(vars_.get("vmId") or f"level-{level.id}-vm"),
+            "vmName":      str(vars_.get("vmName") or f"{level.name} · 目标系统"),
+            "dataTotalGB": int(vars_.get("dataTotalGB") or (100 + ((level.id or 1) * 7) % 400)),
+            "passScore":   int(scoring.get("passingScore") or max(int((level.max_score or 100) * 0.6), 1)),
+            "briefing":    first_briefing,
+            "missionPack": pack.get("id"),
+        }
+
+    # No mission pack referenced → fall back to a topic-agnostic default.
     seed = (level.id or 1) * 7
     return {
         "vmId": f"level-{level.id}-vm",
@@ -292,8 +321,92 @@ def _default_mission_for(level: Level) -> dict:
         "dataTotalGB": 100 + (seed % 400),
         "passScore": max(int((level.max_score or 100) * 0.6), 1),
         "briefing": (level.description
-                     or f"完成《{level.name}》对应的 V2V 迁移战役以通关本关卡。"),
+                     or f"完成《{level.name}》战役以通关本关卡。"),
     }
+
+
+# ---------------------------------------------------------------------------
+# Mission-pack resolution (FPS Mission DSL v1)
+# ---------------------------------------------------------------------------
+#
+# Mission packs live as static JSON under
+#   backend/static/game/missions/<id>.json
+# A platform Level can reference one via ``Level.config``::
+#
+#   { "mission_pack": "smartx-hci-iops-fps-v1" }                     # preferred
+#   { "fps_mission":  { "missionPack": "smartx-v2v-fps-v1", ... } }  # legacy
+#
+# When neither is set, the implicit default is ``smartx-v2v-fps-v1`` (the
+# original built-in topic), so existing courses keep working unchanged.
+
+import json as _json
+import os as _os
+from functools import lru_cache as _lru_cache
+
+_DEFAULT_MISSION_PACK_ID = "smartx-v2v-fps-v1"
+
+
+def _missions_dir() -> str:
+    here = _os.path.dirname(_os.path.abspath(__file__))
+    # apps/api/routes/ → backend/
+    backend = _os.path.abspath(_os.path.join(here, "..", "..", ".."))
+    return _os.path.join(backend, "static", "game", "missions")
+
+
+@_lru_cache(maxsize=32)
+def _load_mission_pack(pack_id: str) -> Optional[dict]:
+    """Read a mission-pack JSON by id. Returns ``None`` when not found.
+
+    Cached because mission packs are immutable per release. ``pack_id`` is
+    validated against ``[a-z0-9-]`` to prevent path traversal.
+    """
+    if not pack_id or not all(c.isalnum() or c == "-" for c in pack_id):
+        return None
+    path = _os.path.join(_missions_dir(), pack_id + ".json")
+    if not _os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return _json.load(fh)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("failed to load mission pack %s: %s", pack_id, exc)
+        return None
+
+
+def _list_mission_packs() -> list[dict]:
+    out: list[dict] = []
+    base = _missions_dir()
+    if not _os.path.isdir(base):
+        return out
+    for name in sorted(_os.listdir(base)):
+        if not name.endswith(".json") or name.startswith("_"):
+            continue
+        pack_id = name[:-5]
+        pack = _load_mission_pack(pack_id)
+        if not pack:
+            continue
+        meta = pack.get("meta") or {}
+        out.append({
+            "id":       pack.get("id") or pack_id,
+            "name":     meta.get("name") or pack_id,
+            "subtitle": meta.get("subtitle"),
+            "domain":   meta.get("domain"),
+            "version":  meta.get("version"),
+            "language": meta.get("language"),
+            "actCount": len(pack.get("acts") or []),
+        })
+    return out
+
+
+def _resolve_mission_pack_for(level: Level) -> Optional[dict]:
+    cfg = level.config if isinstance(level.config, dict) else {}
+    pack_id = cfg.get("mission_pack")
+    if not pack_id and isinstance(cfg.get("fps_mission"), dict):
+        pack_id = cfg["fps_mission"].get("missionPack")
+    if not pack_id:
+        pack_id = _DEFAULT_MISSION_PACK_ID
+    return _load_mission_pack(pack_id)
+
 
 
 def _level_mission(level: Level) -> dict:
@@ -320,15 +433,39 @@ def get_level_mission(level_id: int):
         if not level:
             raise HTTPException(status_code=404, detail="level not found")
         mission = _level_mission(level)
+        pack = _resolve_mission_pack_for(level)
         return {
-            "levelId": level.id,
-            "courseId": level.course_id,
-            "levelName": level.name,
-            "maxScore": level.max_score or 100,
-            "mission": mission,
+            "levelId":     level.id,
+            "courseId":    level.course_id,
+            "levelName":   level.name,
+            "maxScore":    level.max_score or 100,
+            "mission":     mission,
+            # FPS Mission DSL v1: surfaces the resolved pack id so the game
+            # iframe can be opened with ?missionPack=<id>.
+            "missionPack": pack.get("id") if pack else None,
         }
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# FPS Mission DSL — public read endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/api/missions")
+def list_mission_packs():
+    """List available FPS mission packs (id + meta only, no full payload)."""
+    return {"missions": _list_mission_packs()}
+
+
+@router.get("/api/missions/{pack_id}")
+def get_mission_pack(pack_id: str):
+    """Return the full FPS Mission DSL v1 JSON for a given pack id."""
+    pack = _load_mission_pack(pack_id)
+    if not pack:
+        raise HTTPException(status_code=404, detail=f"mission pack '{pack_id}' not found")
+    return pack
+
 
 
 @router.post("/api/migration/levels/{level_id}/complete")

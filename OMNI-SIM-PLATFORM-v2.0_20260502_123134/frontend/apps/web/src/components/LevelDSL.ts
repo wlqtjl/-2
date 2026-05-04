@@ -9,10 +9,16 @@ export const LevelDSL = {
         id: { type: "string" },
         name: { type: "string" },
         description: { type: "string" },
-        type: { type: "string", enum: ["shooting", "puzzle", "adventure", "quiz"] },
+        type: { type: "string", enum: ["shooting", "puzzle", "adventure", "quiz", "fps_mission"] },
         difficulty: { type: "integer", minimum: 1, maximum: 5 },
         max_score: { type: "integer", default: 100 },
         time_limit: { type: "integer" },
+        // FPS Mission DSL v1 — when present (or when type === "fps_mission"),
+        // the platform launches the FPS bundle iframe with ?missionPack=<id>.
+        // The mission JSON itself lives at backend/static/game/missions/<id>.json
+        // and fully specifies intro video / scene / acts / E-key interactables /
+        // narration / scoring — replacing the hardcoded SmartX V2V content.
+        mission_pack: { type: "string" },
         tasks: {
           type: "array",
           items: { $ref: "#/schemas/task" }
